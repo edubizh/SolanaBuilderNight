@@ -1,0 +1,52 @@
+name: Integration Pipeline
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare integration artifact directory
+        run: mkdir -p .artifacts/integration
+
+      - name: Run integration gate
+        id: integration_gate
+        run: |
+          set +e
+          bash infra/ci/run-quality-gate.sh integration 2>&1 | tee .artifacts/integration/integration-gate.log
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=${exit_code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Upload integration artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-artifacts-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            .artifacts/integration/**
+            tests/integration/**/*.xml
+            tests/integration/**/*.json
+            tests/integration/**/*.log
+            tests/integration/**/*.txt
+
+      - name: Fail job if integration gate failed
+        if: steps.integration_gate.outputs.exit_code != '0'
+        run: |
+          echo "Integration gate failed. See uploaded integration artifacts for logs."
+          exit 1

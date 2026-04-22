@@ -1,0 +1,96 @@
+name: Staging Smoke Pipeline
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  smoke:
+    name: Staging Smoke Tests
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare smoke artifact directory
+        run: mkdir -p .artifacts/smoke
+
+      - name: Run smoke gate
+        id: smoke_gate
+        env:
+          STAGING_SMOKE_URL: ${{ secrets.STAGING_SMOKE_URL }}
+          STAGING_SMOKE_TIMEOUT_MS: ${{ vars.STAGING_SMOKE_TIMEOUT_MS }}
+        run: |
+          set +e
+          bash infra/ci/run-quality-gate.sh smoke 2>&1 | tee .artifacts/smoke/smoke-gate.log
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=${exit_code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-artifacts-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            .artifacts/smoke/**
+            tests/smoke/**/*.xml
+            tests/smoke/**/*.json
+            tests/smoke/**/*.log
+            tests/smoke/**/*.txt
+
+      - name: Create staging smoke alert issue
+        if: steps.smoke_gate.outputs.exit_code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const title = `[staging-smoke] failure on ${new Date().toISOString().slice(0, 10)}`;
+            const body = [
+              "Staging smoke pipeline failed.",
+              "",
+              `- Workflow run: ${runUrl}`,
+              `- Commit: ${context.sha}`,
+              `- Branch/ref: ${context.ref}`,
+              "",
+              "Follow the runbook:",
+              "- docs/runbooks/staging-smoke-alerts.md",
+            ].join("\n");
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "alert,staging-smoke",
+              per_page: 100,
+            });
+
+            const alreadyOpen = issues.some((issue) => issue.title === title);
+            if (!alreadyOpen) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["alert", "staging-smoke", "sev2"],
+              });
+            }
+
+      - name: Fail job if smoke gate failed
+        if: steps.smoke_gate.outputs.exit_code != '0'
+        run: |
+          echo "Smoke gate failed. Alert issue created and artifacts uploaded."
+          exit 1

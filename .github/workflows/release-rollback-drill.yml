@@ -1,0 +1,115 @@
+name: Release Rollback Drill
+
+on:
+  pull_request:
+    paths:
+      - "infra/release/**"
+      - "tests/smoke/rollback-drill-assets.test.mjs"
+      - "docs/runbooks/release-rollback-drill.md"
+      - ".github/workflows/release-rollback-drill.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  rollback-drill:
+    name: Rollback Drill Validation
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare rollback artifact directory
+        run: mkdir -p .artifacts/rollback-drill
+
+      - name: Validate rollback drill smoke assets
+        run: node --test tests/smoke/rollback-drill-assets.test.mjs
+
+      - name: Run rollback drill script
+        id: rollback_drill
+        env:
+          ROLLBACK_DRILL_MODE: dry-run
+          ROLLBACK_ARTIFACT_DIR: .artifacts/rollback-drill
+          ROLLBACK_SERVICE_NAME: execution-orchestrator
+          ROLLBACK_CANARY_PERCENT: ${{ vars.ROLLBACK_CANARY_PERCENT || '10' }}
+          ROLLBACK_ERROR_BUDGET_THRESHOLD: ${{ vars.ROLLBACK_ERROR_BUDGET_THRESHOLD || '2' }}
+          ROLLBACK_LATENCY_P95_THRESHOLD_MS: ${{ vars.ROLLBACK_LATENCY_P95_THRESHOLD_MS || '700' }}
+        run: |
+          set +e
+          bash infra/release/rollback-drill.sh 2>&1 | tee .artifacts/rollback-drill/rollback-drill.log
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=${exit_code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Run smoke gate post-drill
+        id: smoke_gate
+        env:
+          STAGING_SMOKE_URL: ${{ secrets.STAGING_SMOKE_URL }}
+          STAGING_SMOKE_TIMEOUT_MS: ${{ vars.STAGING_SMOKE_TIMEOUT_MS }}
+        run: |
+          set +e
+          bash infra/ci/run-quality-gate.sh smoke 2>&1 | tee .artifacts/rollback-drill/post-drill-smoke.log
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=${exit_code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Upload rollback drill artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-drill-artifacts-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            .artifacts/rollback-drill/**
+
+      - name: Create rollback drill alert issue
+        if: steps.rollback_drill.outputs.exit_code != '0' || steps.smoke_gate.outputs.exit_code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const title = `[rollback-drill] failure on ${new Date().toISOString().slice(0, 10)}`;
+            const body = [
+              "Release rollback drill pipeline failed.",
+              "",
+              `- Workflow run: ${runUrl}`,
+              `- Commit: ${context.sha}`,
+              `- Branch/ref: ${context.ref}`,
+              "",
+              "Follow the runbook:",
+              "- docs/runbooks/release-rollback-drill.md",
+            ].join("\n");
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "alert,rollback-drill",
+              per_page: 100,
+            });
+
+            const alreadyOpen = issues.some((issue) => issue.title === title);
+            if (!alreadyOpen) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["alert", "rollback-drill", "sev2"],
+              });
+            }
+
+      - name: Fail if drill or smoke gate failed
+        if: steps.rollback_drill.outputs.exit_code != '0' || steps.smoke_gate.outputs.exit_code != '0'
+        run: |
+          echo "Rollback drill or post-drill smoke gate failed."
+          exit 1

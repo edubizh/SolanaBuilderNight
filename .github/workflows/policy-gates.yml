@@ -1,0 +1,39 @@
+name: Policy Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  ownership-path-guard:
+    name: Ownership Path Guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate changed paths
+        env:
+          AGENT_ID: "8"
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: bash infra/ci/ownership-path-guard.sh
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: infra/security/gitleaks.toml

@@ -1,0 +1,29 @@
+name: Observability Assets Validation
+
+on:
+  pull_request:
+    paths:
+      - "infra/observability/**"
+      - "tests/smoke/observability-bootstrap.test.mjs"
+      - ".github/workflows/observability-assets.yml"
+      - "docs/runbooks/observability-bootstrap.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-observability-assets:
+    name: Validate Observability Bootstrap Assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate observability bootstrap smoke checks
+        run: node --test tests/smoke/observability-bootstrap.test.mjs
