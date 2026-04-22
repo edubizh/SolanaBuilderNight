@@ -1,0 +1,10 @@
+{
+  "name": "@solana-builder-night/opportunity-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic opportunity ranking scaffold",
+  "scripts": {
+    "test": "node --test \"../../tests/unit/opportunity/**/*.test.mjs\" \"../../tests/integration/opportunity/**/*.test.mjs\""
+  }
+}

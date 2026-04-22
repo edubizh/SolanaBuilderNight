@@ -1,0 +1,127 @@
+openapi: 3.1.0
+info:
+  title: SolanaBuilderNight Control Plane API
+  version: 0.1.0
+  description: Baseline API contract for operator control, health, and event introspection.
+servers:
+  - url: https://control-plane.local
+    description: Local development
+tags:
+  - name: Health
+  - name: Config
+  - name: Events
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Service health status
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /v1/config:
+    get:
+      tags: [Config]
+      summary: Get active immutable config version
+      operationId: getActiveConfig
+      responses:
+        "200":
+          description: Active config metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigVersion"
+  /v1/events:
+    post:
+      tags: [Events]
+      summary: Publish canonical event
+      operationId: publishEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CanonicalEvent"
+      responses:
+        "202":
+          description: Event accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventAcceptedResponse"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, timestamp_ms]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        timestamp_ms:
+          type: integer
+          format: int64
+    ConfigVersion:
+      type: object
+      required: [config_id, version, activated_at_ms]
+      properties:
+        config_id:
+          type: string
+        version:
+          type: string
+        activated_at_ms:
+          type: integer
+          format: int64
+    EventAcceptedResponse:
+      type: object
+      required: [accepted, event_id]
+      properties:
+        accepted:
+          type: boolean
+        event_id:
+          type: string
+          format: uuid
+    EventEnvelope:
+      type: object
+      required:
+        - event_id
+        - trace_id
+        - source_service
+        - created_at_ms
+        - event_name
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          format: uuid
+        trace_id:
+          type: string
+        source_service:
+          type: string
+        created_at_ms:
+          type: integer
+          format: int64
+        event_name:
+          type: string
+          enum:
+            - market_data_updated
+            - opportunity_computed
+            - risk_decision_emitted
+            - execution_intent_dispatched
+            - execution_terminal_state
+            - position_reconciled
+            - circuit_breaker_triggered
+    CanonicalEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [payload]
+          properties:
+            payload:
+              type: object

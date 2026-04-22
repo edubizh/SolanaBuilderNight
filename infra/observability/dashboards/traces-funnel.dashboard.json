@@ -1,0 +1,43 @@
+{
+  "title": "SBN Traces Funnel",
+  "uid": "sbn-traces-funnel",
+  "tags": ["sbn", "traces", "sprint4"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Trace Span Volume by Service",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(trace_spans_total[5m])) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "End-to-End Trace Latency p95",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(trace_duration_ms_bucket{pipeline=\"detect_to_terminal\"}[5m])) by (le))",
+          "legendFormat": "detect_to_terminal_p95"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Missing Trace Linkage",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(missing_trace_linkage_total[5m])) by (source_service)",
+          "legendFormat": "{{source_service}}"
+        }
+      ]
+    }
+  ]
+}

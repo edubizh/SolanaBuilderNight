@@ -1,0 +1,34 @@
+{
+  "name": "@solana-builder-night/shared-types",
+  "version": "0.2.0",
+  "description": "Runtime-agnostic shared TypeScript types for SolanaBuilderNight services",
+  "private": false,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@solana-builder-night/contracts": "^0.2.0"
+  },
+  "devDependencies": {
+    "@solana-builder-night/contracts": "file:../contracts",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

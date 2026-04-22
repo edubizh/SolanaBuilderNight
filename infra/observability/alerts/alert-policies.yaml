@@ -1,0 +1,79 @@
+version: 1
+metadata:
+  owner_agent: "8"
+  task_id: "A8-S4-05"
+  scope: "observability-bootstrap"
+  source_of_truth: "infra/observability/alerts/alert-policies.yaml"
+
+defaults:
+  severity: sev2
+  for: 5m
+  labels:
+    service: observability-stack
+    team: sre
+
+policies:
+  - id: kill_switch_activated
+    description: Global kill switch activation should page immediately.
+    expr: increase(kill_switch_activated_total[1m]) > 0
+    for: 0m
+    severity: sev1
+    labels:
+      category: risk
+      runbook: docs/runbooks/observability-bootstrap.md#incident-alert-response
+
+  - id: hard_risk_breach
+    description: Hard-risk breach count must remain zero.
+    expr: increase(hard_risk_breach_total[5m]) > 0
+    for: 0m
+    severity: sev1
+    labels:
+      category: risk
+      runbook: docs/runbooks/observability-bootstrap.md#incident-alert-response
+
+  - id: data_staleness_breach
+    description: Pyth or venue quote freshness exceeded SLO thresholds.
+    expr: max(data_feed_staleness_ms{feed=~"pyth|venue_quote"}) > 3000
+    for: 3m
+    severity: sev2
+    labels:
+      category: data-freshness
+      runbook: docs/runbooks/observability-bootstrap.md#data-staleness-triage
+
+  - id: provider_error_spike
+    description: Provider request errors exceed 5% over 10m.
+    expr: sum(rate(provider_request_errors_total[10m])) / clamp_min(sum(rate(provider_requests_total[10m])), 1) > 0.05
+    for: 10m
+    severity: sev2
+    labels:
+      category: provider-health
+      runbook: docs/runbooks/observability-bootstrap.md#provider-outage-triage
+
+  - id: settlement_backlog_breach
+    description: Settlement backlog exceeds safe threshold.
+    expr: max(settlement_backlog_items) > 50
+    for: 10m
+    severity: sev2
+    labels:
+      category: settlement
+      runbook: docs/runbooks/observability-bootstrap.md#settlement-backlog-triage
+
+  - id: decision_latency_slo_breach
+    description: p95 decision latency above PRD SLO.
+    expr: histogram_quantile(0.95, sum(rate(decision_latency_ms_bucket[10m])) by (le)) > 700
+    for: 10m
+    severity: sev2
+    labels:
+      category: slos
+      rollback_candidate: "true"
+      runbook: docs/runbooks/observability-bootstrap.md#slo-collapse-and-rollback-evaluation
+
+  - id: dispatch_latency_slo_breach
+    description: p95 dispatch latency above PRD SLO.
+    expr: histogram_quantile(0.95, sum(rate(dispatch_latency_ms_bucket[10m])) by (le)) > 500
+    for: 10m
+    severity: sev2
+    labels:
+      category: slos
+      rollback_candidate: "true"
+      runbook: docs/runbooks/observability-bootstrap.md#slo-collapse-and-rollback-evaluation

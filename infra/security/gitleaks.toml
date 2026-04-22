@@ -1,0 +1,7 @@
+title = "SolanaBuilderNight gitleaks config"
+
+[allowlist]
+description = "Allow known test placeholders only"
+regexes = [
+  '''(?i)(example|placeholder|dummy)[-_]?(api|token|secret|key)'''
+]

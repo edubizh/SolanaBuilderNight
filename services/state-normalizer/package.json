@@ -1,0 +1,14 @@
+{
+  "name": "@solana-builder-night/state-normalizer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Canonical timestamp and decimal normalization service",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
