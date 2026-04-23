@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "routes": [
+    {
+      "src": "^/health/?$",
+      "dest": "/api/health.js"
+    }
+  ]
+}
