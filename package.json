@@ -1,0 +1,18 @@
+{
+  "name": "solana-builder-night",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "canary:dflow:dry": "node scripts/live_dflow_canary.mjs --dry-run",
+    "canary:dflow:live": "node scripts/live_dflow_canary.mjs --execute-live",
+    "autobot:profit:dry": "node scripts/autonomous_profit_loop.mjs --dry-run",
+    "autobot:profit:dry:once": "node scripts/autonomous_profit_loop.mjs --dry-run --once",
+    "autobot:profit:live": "node scripts/autonomous_profit_loop.mjs --execute-live",
+    "autobot:profit:live:once": "node scripts/autonomous_profit_loop.mjs --execute-live --once"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0"
+  }
+}
