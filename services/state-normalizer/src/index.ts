@@ -21,6 +21,17 @@ export interface EventIdentity {
   traceId: string;
 }
 
+export {
+  assessPredictionQuoteIntegrity,
+  buildPredictionCanonicalMapping
+} from "./prediction-canonicalization.ts";
+export type {
+  PredictionCanonicalMapping,
+  PredictionCanonicalizationInput,
+  PredictionQuoteInput,
+  PredictionQuoteQualityMetadata
+} from "./prediction-canonicalization.ts";
+
 export function normalizeDecimal(priceAtomic: bigint, decimals: number): string {
   if (decimals < 0) {
     throw new Error("decimals must be >= 0");

@@ -73,3 +73,27 @@ export function evaluateReconciliationDrift(input, policy = DEFAULT_RECONCILIATI
     }
   };
 }
+
+export function buildDeterministicReconciliationLedger(entries = []) {
+  const orderedEntries = [...entries]
+    .map((entry) => ({
+      intentId: String(entry?.intentId ?? "intent-missing"),
+      traceId: String(entry?.traceId ?? "trace-missing"),
+      canonicalMarketId: String(entry?.canonicalMarketId ?? "market-missing"),
+      matched: entry?.matched === true,
+      quantityDriftPct: toFiniteNumber(entry?.quantityDriftPct, 0),
+      valueDriftUsd: toFiniteNumber(entry?.valueDriftUsd, 0),
+      mismatches: Array.isArray(entry?.mismatches) ? [...new Set(entry.mismatches.map((item) => String(item)))].sort() : [],
+      recordedAtMs: toFiniteNumber(entry?.recordedAtMs, 0)
+    }))
+    .sort((a, b) =>
+      `${a.canonicalMarketId}|${a.intentId}|${a.traceId}`.localeCompare(
+        `${b.canonicalMarketId}|${b.intentId}|${b.traceId}`
+      )
+    );
+
+  return orderedEntries.map((entry, index) => ({
+    sequence: index + 1,
+    ...entry
+  }));
+}

@@ -55,13 +55,56 @@ export class PnpClient {
     if (!Number.isFinite(price) || price <= 0) {
       throw new Error(`PNP quote for ${marketId} returned invalid price`);
     }
+    const responseMarketId = payload?.marketId ?? payload?.id ?? marketId;
+    if (responseMarketId !== marketId) {
+      throw new Error(
+        `PNP quote response marketId mismatch: requested ${marketId}, got ${String(responseMarketId)}`,
+      );
+    }
+
+    const responseSize = payload?.size ?? payload?.quantity;
+    if (responseSize !== undefined) {
+      const normalizedSize = Number(responseSize);
+      if (!Number.isFinite(normalizedSize) || normalizedSize <= 0) {
+        throw new Error(`PNP quote for ${marketId} returned invalid size`);
+      }
+      if (Math.abs(normalizedSize - size) > Number.EPSILON) {
+        throw new Error(
+          `PNP quote response size mismatch: requested ${size}, got ${normalizedSize}`,
+        );
+      }
+    }
+
+    const quoteTimestampMs = this.#normalizeQuoteTimestampMs(payload, marketId);
+    const fetchedAtMs = this.now();
+    const sourceTimestampMs = quoteTimestampMs ?? fetchedAtMs;
 
     return {
       marketId,
       price,
       size,
-      fetchedAtMs: this.now(),
+      sourceTimestampMs,
+      fetchedAtMs,
     };
+  }
+
+  #normalizeQuoteTimestampMs(payload, marketId) {
+    const rawTimestamp =
+      payload?.timestampMs ??
+      payload?.quotedAtMs ??
+      payload?.asOfMs ??
+      payload?.timestamp ??
+      payload?.quotedAt;
+
+    if (rawTimestamp === undefined || rawTimestamp === null || rawTimestamp === "") {
+      return undefined;
+    }
+
+    const timestampMs = Number(rawTimestamp);
+    if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
+      throw new Error(`PNP quote for ${marketId} returned invalid timestamp`);
+    }
+    return timestampMs;
   }
 
   async submitOrder({ intentId, marketId, side, size, maxSlippageBps }) {

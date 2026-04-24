@@ -4,6 +4,18 @@ All notable changes to `@solana-builder-night/shared-types` are documented in th
 
 The format follows Keep a Changelog and semantic versioning.
 
+## [Unreleased]
+
+### Added
+- Prediction shared type exports for Stage A:
+  - deterministic canonical ID string aliases,
+  - canonical enums for event state, market type, outcome side, and quote quality tiers,
+  - `PredictionCanonicalMapping` and `PredictionQuoteQualityMetadata` contracts.
+
+### Changed
+- Updated market and execution venue unions to include `gemini`.
+- Extended `MarketSnapshot` and `CanonicalEvent.market_data_updated` payload with optional canonical IDs and quote quality metadata.
+
 ## [0.2.0] - 2026-04-21
 
 ### Changed

@@ -1,0 +1,8 @@
+exit_code=0
+stdout:
+Generated promotion gate daily artifacts:
+- /Users/elidubizh/Desktop/SolanaBuilderNight/tests/smoke/artifacts/promotion-gate/pm-g-004/.tmp/promotion-gate-daily-snapshot-20260424T000000Z.json
+- /Users/elidubizh/Desktop/SolanaBuilderNight/tests/smoke/artifacts/promotion-gate/pm-g-004/.tmp/promotion-gate-daily-summary-20260424T000000Z.md
+
+stderr:
+

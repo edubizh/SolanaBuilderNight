@@ -1,0 +1,11 @@
+{
+  "taskId": "PM-C-002",
+  "generatedAtUtc": "20260424T203521Z",
+  "checks": {
+    "guardedModeOnly": true,
+    "riskCapsConfigured": true,
+    "noNakedExposureEnforced": true,
+    "approvalTrailRequired": true
+  },
+  "notes": "Template evidence artifact. Populate with Gemini guarded-live execution audit output from runtime environment."
+}

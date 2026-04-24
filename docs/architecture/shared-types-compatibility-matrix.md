@@ -39,3 +39,12 @@ This matrix defines the required semantic version constraints for `@solana-build
 1. `v0.2.0` is the only accepted contract baseline for Sprint 3 integration tasks.
 2. Any post-freeze breaking proposal must be deferred to `v0.3.0` unless explicitly approved by Agent 1 with migration notes.
 3. PATCH updates in the `0.2.x` line may only include documentation, examples, and non-contract metadata clarifications.
+
+## Stage A prediction additive contracts
+
+- Stage A prediction-market support is additive-only and backward-safe for `0.2.x` consumers.
+- New optional fields are permitted for:
+  - canonical prediction IDs (`canonical_event_id`, `canonical_market_id`),
+  - canonical outcome side metadata (`outcome_side`),
+  - quote quality metadata (`quote_quality`).
+- Venue enums now include `gemini` in addition to `dflow` and `pnp`; consumers that exhaustively switch on venue should add a `gemini` branch before enabling that venue in runtime logic.

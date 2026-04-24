@@ -1,0 +1,31 @@
+{
+  "task_id": "PM-G-002",
+  "generated_at_utc": "2026-04-24T20:51:41.691Z",
+  "as_of_utc": "2026-04-24T00:00:00.000Z",
+  "evaluator_contract_version": "PM-G-001",
+  "strict_wall_clock_policy": {
+    "validated": true,
+    "policy": "STRICT_UTC_WALL_CLOCK",
+    "notes": [
+      "UTC day completion only; no rolling 24h windows.",
+      "Counts must equal floor((UTC day start(as_of_utc) - UTC day start(started_at)) / 86400000).",
+      "Milliseconds within a UTC day do not earn fractional day credit."
+    ],
+    "expected_from_context": {
+      "paper_days_completed": 7,
+      "guarded_live_days_completed": 3
+    }
+  },
+  "evaluator": {
+    "as_of_utc": "2026-04-24T00:00:00.000Z",
+    "paper_days_completed": 7,
+    "guarded_live_days_completed": 3,
+    "realized_pnl_usd": 12.4,
+    "critical_risk_breaches": 0,
+    "overall_pass": true,
+    "failed_criteria": []
+  },
+  "remaining_to_unlock": [
+    "None. Promotion gate criteria are fully satisfied."
+  ]
+}

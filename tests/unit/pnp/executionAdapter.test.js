@@ -64,9 +64,16 @@ test("discoverMarkets includes v3 when pnpV3 feature flag scaffold is enabled", 
 
 test("getPrice validates marketId and delegates to client quote flow", async () => {
   const adapter = new PnpExecutionAdapter({
+    now: () => 1713700001000,
     client: {
       async getQuote({ marketId, size }) {
-        return { marketId, size, price: 123.45, fetchedAtMs: 1713700000000 };
+        return {
+          marketId,
+          size,
+          price: 123.45,
+          sourceTimestampMs: 1713700000000,
+          fetchedAtMs: 1713700000000,
+        };
       },
     },
   });
@@ -76,6 +83,51 @@ test("getPrice validates marketId and delegates to client quote flow", async () 
   const quote = await adapter.getPrice({ marketId: "m1", size: 2 });
   assert.equal(quote.price, 123.45);
   assert.equal(quote.marketId, "m1");
+});
+
+test("getPrice rejects stale quote and malformed quote payloads", async () => {
+  const staleAdapter = new PnpExecutionAdapter({
+    now: () => 1713700010000,
+    maxQuoteAgeMs: 1000,
+    client: {
+      async getQuote() {
+        return {
+          marketId: "m1",
+          size: 2,
+          price: 123.45,
+          sourceTimestampMs: 1713700000000,
+          fetchedAtMs: 1713700000000,
+        };
+      },
+    },
+  });
+  await assert.rejects(() => staleAdapter.getPrice({ marketId: "m1", size: 2 }), /quote is stale/);
+
+  const malformedAdapter = new PnpExecutionAdapter({
+    now: () => 1713700000000,
+    client: {
+      async getQuote() {
+        return { marketId: "m1", size: 2, price: 0, fetchedAtMs: 1713700000000 };
+      },
+    },
+  });
+  await assert.rejects(
+    () => malformedAdapter.getPrice({ marketId: "m1", size: 2 }),
+    /quote price must be a positive number/,
+  );
+
+  const mismatchAdapter = new PnpExecutionAdapter({
+    now: () => 1713700000000,
+    client: {
+      async getQuote() {
+        return { marketId: "m2", size: 2, price: 10, fetchedAtMs: 1713700000000 };
+      },
+    },
+  });
+  await assert.rejects(
+    () => mismatchAdapter.getPrice({ marketId: "m1", size: 2 }),
+    /marketId mismatch/,
+  );
 });
 
 test("executeOrder delegates to client", async () => {

@@ -135,3 +135,46 @@ test("DFlowAdapter imperative swap path is idempotent for repeated intent submis
   assert.equal(second.deduplicated, true);
   assert.equal(second.swap.swapId, "swap-idem-1");
 });
+
+test("DFlowAdapter Stage A integrity surfaces expose quote and order-status checks", async () => {
+  const adapter = new DFlowAdapter({
+    tradingBaseUrl: "https://quote-api.dflow.net",
+    fetchImpl: async (url) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === "/quote") {
+        return new Response(
+          JSON.stringify({
+            id: "quote-integrity-1",
+            timestamp: "2026-04-24T20:30:00.000Z",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+
+      assert.equal(pathname, "/order-status");
+      return new Response(
+        JSON.stringify({
+          order_id: "ord-integrity-1",
+          executionStatus: "Confirmed",
+          updatedAt: "2026-04-24T20:30:02.000Z",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const quoteIntegrity = await adapter.getQuoteIntegrity(
+    { market: "mkt-1", side: "buy" },
+    { nowMs: Date.parse("2026-04-24T20:30:10.000Z"), maxAgeMs: 20_000 },
+  );
+  const statusIntegrity = await adapter.getOrderStatusIntegrity(
+    { orderId: "ord-integrity-1" },
+    { nowMs: Date.parse("2026-04-24T20:30:10.000Z"), maxAgeMs: 20_000 },
+  );
+
+  assert.equal(quoteIntegrity.ok, true);
+  assert.equal(quoteIntegrity.canonicalIds.primaryId, "quote-integrity-1");
+  assert.equal(statusIntegrity.ok, true);
+  assert.equal(statusIntegrity.canonicalIds.primaryId, "ord-integrity-1");
+  assert.equal(statusIntegrity.parsed.status, "confirmed");
+});

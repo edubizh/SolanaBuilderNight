@@ -11,6 +11,7 @@
  * @property {string} marketId
  * @property {number} price
  * @property {number} size
+ * @property {number} sourceTimestampMs
  * @property {number} fetchedAtMs
  */
 

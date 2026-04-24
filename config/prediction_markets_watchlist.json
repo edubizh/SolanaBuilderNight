@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "notes": "Fill in real market identifiers for venues you want to compare. Pairs with at least 2 valid venue quotes are ranked.",
+  "pairs": [
+    {
+      "id": "btc-demo-pair",
+      "question": "Demo cross-venue YES price comparison for a BTC-themed market",
+      "minSpreadToTrade": 0.02,
+      "venues": {
+        "dflow": {
+          "marketTicker": "KXBTC-26DEC31-B100000"
+        },
+        "gemini": {
+          "symbol": "GEMI-BTC-261231-B100K"
+        },
+        "kalshi": {
+          "ticker": "KXBTC-26DEC31-B100000"
+        },
+        "pnp": {
+          "marketId": "REPLACE_WITH_PNP_MARKET_ID",
+          "size": 1
+        }
+      }
+    }
+  ]
+}

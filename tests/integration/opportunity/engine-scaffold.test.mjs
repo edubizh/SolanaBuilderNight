@@ -5,6 +5,7 @@ import {
   calculateEdgeNet,
   filterEligibleCandidates,
   rankCandidates,
+  runPaperArbitrageLoop,
 } from "../../../services/opportunity-engine/src/index.js";
 
 test("engine scaffold supports deterministic replay semantics", () => {
@@ -147,5 +148,60 @@ test("eligibility filtering composes with deterministic ranking by strategy mode
   assert.deepEqual(
     conservativeRanked.map((candidate) => candidate.intentId),
     ["intent-1"],
+  );
+});
+
+test("paper arbitrage loop generates deterministic decision logs and artifacts", () => {
+  const marketQuotes = [
+    {
+      traceId: "trace-z",
+      canonicalEventId: "pm_evt_v1_z",
+      canonicalMarketId: "pm_mkt_v1_b",
+      venue: "pnp",
+      venueMarketId: "pnp-1",
+      yesBidPrice: 0.68,
+      yesAskPrice: 0.7,
+      observedAtMs: 4000,
+      freshnessTier: "fresh",
+      integrityStatus: "ok",
+    },
+    {
+      traceId: "trace-z",
+      canonicalEventId: "pm_evt_v1_z",
+      canonicalMarketId: "pm_mkt_v1_b",
+      venue: "dflow",
+      venueMarketId: "df-1",
+      yesBidPrice: 0.59,
+      yesAskPrice: 0.61,
+      observedAtMs: 4000,
+      freshnessTier: "fresh",
+      integrityStatus: "ok",
+    },
+    {
+      traceId: "trace-z",
+      canonicalEventId: "pm_evt_v1_z",
+      canonicalMarketId: "pm_mkt_v1_a",
+      venue: "gemini",
+      venueMarketId: "gm-2",
+      yesBidPrice: 0.5,
+      yesAskPrice: 0.53,
+      observedAtMs: 4000,
+      freshnessTier: "fresh",
+      integrityStatus: "ok",
+    },
+  ];
+
+  const result = runPaperArbitrageLoop(marketQuotes, {
+    minSpreadToTrade: 0.03,
+    tradeNotionalUsd: 100,
+    nowMs: 777_000,
+  });
+
+  assert.deepEqual(result.intents.map((intent) => intent.canonicalMarketId), ["pm_mkt_v1_b"]);
+  assert.equal(result.intents[0].executionMode, "paper_only");
+  assert.equal(result.intents[0].noNakedExposure.passed, true);
+  assert.deepEqual(
+    result.decisionLogs.map((log) => `${log.canonicalMarketId}:${log.decision}`),
+    ["pm_mkt_v1_a:rejected", "pm_mkt_v1_b:accepted"],
   );
 });

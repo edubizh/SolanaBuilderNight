@@ -4,6 +4,18 @@ All notable changes to `@solana-builder-night/contracts` are documented in this 
 
 The format follows Keep a Changelog and semantic versioning.
 
+## [Unreleased]
+
+### Added
+- Prediction-market canonical schemas for Stage A cross-venue mapping:
+  - deterministic ID format contracts (`pm_evt_v1_*`, `pm_mkt_v1_*`, `pm_out_v1_*`),
+  - canonical enums for event state, market type, and outcome side,
+  - quote quality metadata schema for freshness/integrity/confidence classification.
+
+### Changed
+- Expanded prediction venue enums from `dflow|pnp` to `dflow|gemini|pnp` in additive contract fields and execution/market payload schemas.
+- Added optional canonical prediction identifiers and quote quality metadata on market snapshot and market-data event payloads.
+
 ## [0.2.0] - 2026-04-21
 
 ### Added

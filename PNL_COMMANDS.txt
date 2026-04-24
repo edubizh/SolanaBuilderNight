@@ -1,0 +1,33 @@
+# SolanaBuilderNight PnL Command Cheat Sheet
+# Run from: /Users/elidubizh/Desktop/SolanaBuilderNight
+
+# 1) Estimated PnL summary from bot logs
+npm run autobot:pnl
+
+# 2) Realized PnL summary (uses on-chain tx lookups)
+npm run autobot:pnl:realized
+
+# 3) Realized PnL for only today
+node scripts/autobot_pnl_report.mjs --day=$(date +%F) --realized
+
+# 4) Show each recent tx delta + final total delta
+npm run --silent autobot:pnl:realized | jq -r '
+  (.realizedRowsPreview[] | "\(.signature)  usd_delta=\(.realizedUsd)"),
+  "FINAL_DELTA_USD=\(.realized.sumRealizedUsd)"
+'
+
+# 5) Show only final total delta number
+npm run --silent autobot:pnl:realized | jq '.realized.sumRealizedUsd'
+
+# 6) Find skipped and executed events in live log (no ripgrep required)
+grep -E '"signature"|"expected_net_usd_below_threshold"' .artifacts/autobot/live.out
+
+# 7) Tail JSONL bot events in real time
+tail -f .artifacts/autobot/profit-loop-$(date +%F).jsonl | jq .
+
+# 8) Compact real-time feed (cycle, pass/fail, expected net, signature)
+tail -f .artifacts/autobot/profit-loop-$(date +%F).jsonl | jq -c '{cycle,timestamp,expectedNetUsd:.profitGate.expectedNetUsd,pass:.guardrails.passed,failures:.guardrails.failures,signature:(.liveExecution.signature // null),error}'
+
+# 9) Filter report output for a specific signature (replace SIGNATURE)
+SIG="4f9SUnvX2eiyaw6WpKQMa6n2wqxF5jPmdH9MGn5NornQZhAkpwmQUcmGa3TLkzgu9rUaEBE1ixgvRJG5tdTpbBMP"
+npm run --silent autobot:pnl:realized | jq -r --arg sig "$SIG" '.realizedRowsPreview[] | select(.signature==$sig)'

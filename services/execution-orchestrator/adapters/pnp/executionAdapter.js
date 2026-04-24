@@ -1,6 +1,7 @@
 import { PnpClient } from "./client.js";
 
 const CUSTOM_ORACLE_RESOLVABLE_WINDOW_MS = 15 * 60 * 1000;
+const DEFAULT_MAX_QUOTE_AGE_MS = 5_000;
 
 export class PnpExecutionAdapter {
   constructor({
@@ -8,11 +9,13 @@ export class PnpExecutionAdapter {
     enableV3 = false,
     featureFlags = {},
     now = () => Date.now(),
+    maxQuoteAgeMs = DEFAULT_MAX_QUOTE_AGE_MS,
   } = {}) {
     this.client = client;
     this.enableV3 = enableV3;
     this.featureFlags = featureFlags;
     this.now = now;
+    this.maxQuoteAgeMs = maxQuoteAgeMs;
   }
 
   async discoverMarkets() {
@@ -26,7 +29,8 @@ export class PnpExecutionAdapter {
     if (!marketId) {
       throw new Error("PNP getPrice requires marketId");
     }
-    return this.client.getQuote({ marketId, size });
+    const quote = await this.client.getQuote({ marketId, size });
+    return this.#validateQuoteIntegrity({ quote, marketId, size });
   }
 
   async executeOrder(orderRequest) {
@@ -99,5 +103,45 @@ export class PnpExecutionAdapter {
 
   #isV3Enabled() {
     return this.enableV3 || this.featureFlags?.pnpV3 === true;
+  }
+
+  #validateQuoteIntegrity({ quote, marketId, size }) {
+    if (!quote || typeof quote !== "object") {
+      throw new Error("PNP quote payload must be an object");
+    }
+    if (quote.marketId !== marketId) {
+      throw new Error(
+        `PNP quote marketId mismatch: requested ${marketId}, got ${String(quote.marketId)}`,
+      );
+    }
+    if (typeof quote.size !== "number" || !Number.isFinite(quote.size) || quote.size <= 0) {
+      throw new Error("PNP quote size must be a positive number");
+    }
+    if (Math.abs(quote.size - size) > Number.EPSILON) {
+      throw new Error(`PNP quote size mismatch: requested ${size}, got ${quote.size}`);
+    }
+    if (typeof quote.price !== "number" || !Number.isFinite(quote.price) || quote.price <= 0) {
+      throw new Error("PNP quote price must be a positive number");
+    }
+
+    const nowMs = this.now();
+    const sourceTimestampMs = Number(quote.sourceTimestampMs ?? quote.fetchedAtMs);
+    if (!Number.isFinite(sourceTimestampMs) || sourceTimestampMs <= 0) {
+      throw new Error("PNP quote must include a valid timestamp");
+    }
+    const ageMs = nowMs - sourceTimestampMs;
+    if (!Number.isFinite(ageMs) || ageMs < 0) {
+      throw new Error("PNP quote timestamp is invalid");
+    }
+    if (ageMs > this.maxQuoteAgeMs) {
+      throw new Error(
+        `PNP quote is stale: age ${ageMs}ms exceeds max ${this.maxQuoteAgeMs}ms`,
+      );
+    }
+
+    return {
+      ...quote,
+      sourceTimestampMs,
+    };
   }
 }

@@ -1,0 +1,72 @@
+name: Promotion Gate Daily Artifact Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      evaluator_payload_json:
+        description: "Evaluator output JSON following PM-G-001 contract"
+        required: true
+        type: string
+      context_payload_json:
+        description: "Context JSON with paper_started_at_utc_ms and guarded_live_started_at_utc_ms"
+        required: true
+        type: string
+  schedule:
+    - cron: "5 0 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  daily-artifacts:
+    name: Build PM-G-002 Daily Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare promotion gate payload inputs
+        env:
+          INPUT_EVALUATOR_JSON: ${{ inputs.evaluator_payload_json }}
+          INPUT_CONTEXT_JSON: ${{ inputs.context_payload_json }}
+          SCHEDULED_EVALUATOR_JSON: ${{ vars.PROMOTION_GATE_EVALUATOR_PAYLOAD_JSON }}
+          SCHEDULED_CONTEXT_JSON: ${{ vars.PROMOTION_GATE_CONTEXT_PAYLOAD_JSON }}
+        run: |
+          mkdir -p .artifacts/promotion-gate
+          evaluator_payload="${INPUT_EVALUATOR_JSON:-${SCHEDULED_EVALUATOR_JSON:-}}"
+          context_payload="${INPUT_CONTEXT_JSON:-${SCHEDULED_CONTEXT_JSON:-}}"
+          if [[ -z "${evaluator_payload}" ]]; then
+            echo "BLOCKER_REASON=missing_required_input:evaluator_payload_json"
+            echo "Missing evaluator payload JSON from workflow input or PROMOTION_GATE_EVALUATOR_PAYLOAD_JSON."
+            exit 1
+          fi
+          if [[ -z "${context_payload}" ]]; then
+            echo "BLOCKER_REASON=missing_required_input:context_payload_json"
+            echo "Missing context payload JSON from workflow input or PROMOTION_GATE_CONTEXT_PAYLOAD_JSON."
+            exit 1
+          fi
+          printf "%s\n" "${evaluator_payload}" > .artifacts/promotion-gate/evaluator.json
+          printf "%s\n" "${context_payload}" > .artifacts/promotion-gate/context.json
+          node -e "JSON.parse(require('node:fs').readFileSync('.artifacts/promotion-gate/evaluator.json', 'utf8'));"
+          node -e "JSON.parse(require('node:fs').readFileSync('.artifacts/promotion-gate/context.json', 'utf8'));"
+
+      - name: Build evaluator-wired daily artifacts
+        run: node infra/ci/build-promotion-gate-daily-artifacts.mjs .artifacts/promotion-gate/evaluator.json .artifacts/promotion-gate/context.json
+
+      - name: Validate daily artifact naming and content
+        run: node --test tests/smoke/promotion-gate-daily-artifact-pipeline.test.mjs
+
+      - name: Upload promotion gate daily artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: promotion-gate-daily-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            .artifacts/promotion-gate/**
+            infra/task-status/artifacts/promotion-gate/**

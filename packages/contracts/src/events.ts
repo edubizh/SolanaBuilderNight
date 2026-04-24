@@ -1,4 +1,11 @@
 import { z } from "zod";
+import {
+  canonicalPredictionEventIdSchema,
+  canonicalPredictionMarketIdSchema,
+  predictionOutcomeSideSchema,
+  predictionQuoteQualityMetadataSchema,
+  predictionVenueSchema,
+} from "./prediction-schema.js";
 
 export const eventNameSchema = z.enum([
   "market_data_updated",
@@ -21,7 +28,7 @@ export const eventEnvelopeSchema = z.object({
 });
 
 export const marketDataUpdatedPayloadSchema = z.object({
-  venue: z.string().min(1),
+  venue: predictionVenueSchema,
   market_symbol: z.string().min(1),
   quote_timestamp_ms: z.number().int().nonnegative(),
   oracle_timestamp_ms: z.number().int().nonnegative().optional(),
@@ -30,6 +37,10 @@ export const marketDataUpdatedPayloadSchema = z.object({
   mid_price: z.number().finite().optional(),
   confidence_ratio: z.number().nonnegative().optional(),
   staleness_ms: z.number().int().nonnegative(),
+  canonical_event_id: canonicalPredictionEventIdSchema.optional(),
+  canonical_market_id: canonicalPredictionMarketIdSchema.optional(),
+  outcome_side: predictionOutcomeSideSchema.optional(),
+  quote_quality: predictionQuoteQualityMetadataSchema.optional(),
 });
 
 export const opportunityComputedPayloadSchema = z.object({
@@ -46,7 +57,7 @@ export const riskDecisionPayloadSchema = z.object({
 });
 
 export const executionIntentPayloadSchema = z.object({
-  venue: z.enum(["dflow", "pnp"]),
+  venue: predictionVenueSchema,
   operation: z.string().min(1),
   requested_notional_usd: z.number().positive(),
   idempotency_key: z.string().min(1),
