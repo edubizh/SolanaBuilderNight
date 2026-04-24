@@ -8,6 +8,13 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 import { DFlowAdapter } from "../services/execution-orchestrator/adapters/dflow/index.js";
+import {
+  computeRealizedNetUsdFromJsonParsedTx,
+  getTransactionJsonParsed,
+  isDflowOrderStatusFilled,
+  isHttpRpcUrl,
+  waitForSignatureConfirmedRpc,
+} from "../services/execution-orchestrator/adapters/dflow/solanaRpcConfirm.mjs";
 import { RiskEngine } from "../services/risk-engine/src/index.js";
 
 const DEFAULT_DFLOW_QUOTE_API_URL = "https://dev-quote-api.dflow.net";
@@ -221,35 +228,95 @@ function assertLiveRuntimeGuards({ signableTx, rpcUrl, guardrailFailures }) {
   }
 }
 
-async function executeLiveSwap({ rpcUrl, keypair, signableTx, order }) {
+async function executeLiveSwap({ rpcUrl, keypair, signableTx, order, adapter, usdcMint, solUsd }) {
   const connection = new Connection(rpcUrl, "confirmed");
   const tx = VersionedTransaction.deserialize(Buffer.from(signableTx, "base64"));
   tx.sign([keypair]);
+  const wallet = keypair.publicKey.toBase58();
 
   const signature = await connection.sendTransaction(tx, { maxRetries: 3 });
+  const base = {
+    wallet,
+    signature,
+    orbExplorerUrl: `https://orbmarkets.io/tx/${signature}`,
+  };
 
-  let confirmation;
-  if (
-    order.lastValidBlockHeight !== undefined &&
-    order.lastValidBlockHeight !== null
-  ) {
-    confirmation = await connection.confirmTransaction(
-      {
-        signature,
-        blockhash: tx.message.recentBlockhash,
-        lastValidBlockHeight: Number(order.lastValidBlockHeight),
+  if (!isHttpRpcUrl(rpcUrl)) {
+    return {
+      ...base,
+      status: "unconfirmed_no_rpc",
+      reason: "missing_or_invalid_http_rpc_url",
+      confirmation: null,
+      realizedNetUsd: null,
+    };
+  }
+
+  const lastValidBlockHeight =
+    order.lastValidBlockHeight !== undefined && order.lastValidBlockHeight !== null
+      ? Number(order.lastValidBlockHeight)
+      : null;
+
+  const wait = await waitForSignatureConfirmedRpc({
+    rpcUrl,
+    signature,
+    lastValidBlockHeight: Number.isFinite(lastValidBlockHeight) ? lastValidBlockHeight : null,
+  });
+
+  if (wait.ok) {
+    let net = { ok: false, reason: "get_transaction_unavailable" };
+    try {
+      const chainTx = await getTransactionJsonParsed(rpcUrl, signature);
+      net = computeRealizedNetUsdFromJsonParsedTx(chainTx, wallet, usdcMint, solUsd);
+    } catch (error) {
+      net = {
+        ok: false,
+        reason: "get_transaction_fetch_failed",
+        getTransactionError: error instanceof Error ? error.message : String(error),
+      };
+    }
+    return {
+      ...base,
+      status: "confirmed",
+      confirmation: {
+        source: "rpc",
+        value: wait.value,
+        confirmationStatus: wait.confirmationStatus,
       },
-      "confirmed",
-    );
-  } else {
-    confirmation = await connection.confirmTransaction(signature, "confirmed");
+      realizedNetUsd: net.ok ? net.realizedNetUsd : null,
+      realizedMeta: net.ok
+        ? { solDelta: net.solDelta, usdcDelta: net.usdcDelta, solUsd, computeOk: true }
+        : { reason: net.reason, getTransactionError: net.getTransactionError, solUsd, computeOk: false },
+    };
+  }
+
+  const orderId = order?.orderId ?? order?.order_id;
+  let dflowOrderStatusFallback = null;
+  if (orderId) {
+    try {
+      const st = await adapter.getOrderStatus({ orderId: String(orderId) });
+      const state = st?.status ?? st?.state ?? st?.orderStatus ?? st?.executionStatus;
+      dflowOrderStatusFallback = {
+        orderId: String(orderId),
+        filledHint: isDflowOrderStatusFilled(state),
+        state: typeof state === "string" ? state : null,
+        response: st,
+      };
+    } catch (error) {
+      dflowOrderStatusFallback = {
+        orderId: String(orderId),
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   return {
-    wallet: keypair.publicKey.toBase58(),
-    signature,
-    orbExplorerUrl: `https://orbmarkets.io/tx/${signature}`,
-    confirmation,
+    ...base,
+    status: "submitted_unconfirmed",
+    reason: wait.reason,
+    blockHeightExceeded: wait.blockHeightExceeded === true,
+    confirmation: { source: "rpc", lastRpcWait: wait },
+    dflowOrderStatusFallback,
+    realizedNetUsd: null,
   };
 }
 
@@ -411,8 +478,25 @@ async function runCycle({ executeLive, adapter, keypair }) {
   }
 
   assertLiveRuntimeGuards({ signableTx, rpcUrl, guardrailFailures });
-  summary.liveExecution = await executeLiveSwap({ rpcUrl, keypair, signableTx, order });
+  const usdcMintForPnl = outputMint;
+  const solUsd = referencePrice?.solUsd ?? null;
+  summary.liveExecution = await executeLiveSwap({
+    rpcUrl,
+    keypair,
+    signableTx,
+    order,
+    adapter,
+    usdcMint: usdcMintForPnl,
+    solUsd,
+  });
   summary.notes = ["Live execution submitted because all profit/risk guards passed."];
+  if (summary.liveExecution?.status === "unconfirmed_no_rpc") {
+    summary.notes.push("unconfirmed_no_rpc: valid HTTP SOLANA_RPC_URL is required to confirm and realize PnL.");
+  } else if (summary.liveExecution?.status === "submitted_unconfirmed") {
+    summary.notes.push(
+      "submitted_unconfirmed: RPC did not confirm the signature before timeout or blockhash expiry; see liveExecution for details.",
+    );
+  }
   return summary;
 }
 

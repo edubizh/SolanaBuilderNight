@@ -47,14 +47,25 @@ test("assessPredictionQuoteIntegrity classifies crossed and stale quotes", () =>
   assert.equal(crossed.integrity_status, "crossed_book");
   assert.equal(crossed.freshness_tier, "realtime");
 
-  const stale = assessPredictionQuoteIntegrity({
+  const stillOkButTierStale = assessPredictionQuoteIntegrity({
     observedAtMs: 1_776_787_200_000,
-    nowMs: 1_776_787_270_500,
+    nowMs: 1_776_787_200_000 + 70_500,
     bidPrice: 0.4,
     askPrice: 0.45,
     confidenceRatio: 0.05,
     depthScore: 0.8
   });
-  assert.equal(stale.integrity_status, "stale_rejected");
-  assert.equal(stale.freshness_tier, "expired");
+  assert.equal(stillOkButTierStale.integrity_status, "ok");
+  assert.equal(stillOkButTierStale.freshness_tier, "stale");
+
+  const rejectedOld = assessPredictionQuoteIntegrity({
+    observedAtMs: 1_776_787_200_000,
+    nowMs: 1_776_787_200_000 + 300_001,
+    bidPrice: 0.4,
+    askPrice: 0.45,
+    confidenceRatio: 0.05,
+    depthScore: 0.8
+  });
+  assert.equal(rejectedOld.integrity_status, "stale_rejected");
+  assert.equal(rejectedOld.freshness_tier, "expired");
 });

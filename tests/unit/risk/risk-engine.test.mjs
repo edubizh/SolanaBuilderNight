@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { RiskEngine } from "../../../services/risk-engine/src/index.js";
+import { RiskEngine, buildPmO002BreachTelemetry } from "../../../services/risk-engine/src/index.js";
 
 test("risk engine approves trade when hard limits are respected", () => {
   const engine = new RiskEngine();
@@ -278,8 +278,118 @@ test("paper arbitrage risk controls enforce no-naked-exposure and conservative l
     { rank: 5, reason: "projected_paper_loss_limit_exceeded", count: 1 },
     { rank: 6, reason: "venue_open_exposure_limit_exceeded", count: 1 }
   ]);
-  assert.equal(result.riskBreakerSimulation.triggered, true);
-  assert.equal(result.riskBreakerSimulation.reason, "critical_rule_breach");
-  assert.equal(result.riskBreakerSimulation.criticalBreachClassifier.topCause.reason, "critical_rule_breach");
-  assert.equal(result.operationalEvidenceSnapshot.riskBreakerSimulation.criticalBreachClassifier.classification, "critical_breach");
+  assert.equal(result.riskBreakerSimulation.triggered, false);
+  assert.equal(result.riskBreakerSimulation.reason, "none");
+  assert.equal(result.riskBreakerSimulation.criticalBreachClassifier.topCause.reason, "none");
+  assert.equal(result.operationalEvidenceSnapshot.riskBreakerSimulation.criticalBreachClassifier.classification, "clear");
+});
+
+test("paper arbitrage breaker simulation remains inactive with 15 rejected intents", () => {
+  const engine = new RiskEngine();
+  const intents = Array.from({ length: 15 }, (_, index) => ({
+    intentId: `intent-reject-${index + 1}`,
+    traceId: `trace-reject-${index + 1}`,
+    canonicalMarketId: `mkt-${(index % 3) + 1}`,
+    buyVenue: "dflow",
+    sellVenue: "dflow",
+    tradeNotionalUsd: 300,
+    expectedValueUsd: 10,
+    executionMode: "paper_only",
+    noNakedExposure: { required: true, passed: false }
+  }));
+
+  const result = engine.evaluatePaperArbitrageOutputs({
+    nowMs: 77_000,
+    currentState: {},
+    intents,
+    decisionLogs: []
+  });
+
+  assert.equal(result.acceptedIntents.length, 0);
+  assert.equal(result.rejectedIntents.length, 15);
+  assert.equal(result.riskBreakerSimulation.triggered, false);
+});
+
+test("paper arbitrage breaker simulation remains inactive with zero intents", () => {
+  const engine = new RiskEngine();
+  const result = engine.evaluatePaperArbitrageOutputs({
+    nowMs: 78_000,
+    currentState: {},
+    intents: [],
+    decisionLogs: []
+  });
+
+  assert.equal(result.acceptedIntents.length, 0);
+  assert.equal(result.rejectedIntents.length, 0);
+  assert.equal(result.riskBreakerSimulation.triggered, false);
+});
+
+test("paper arbitrage breaker simulation remains inactive with one accepted intent", () => {
+  const engine = new RiskEngine();
+  const result = engine.evaluatePaperArbitrageOutputs({
+    nowMs: 79_000,
+    currentState: {},
+    intents: [
+      {
+        intentId: "intent-accepted-1",
+        traceId: "trace-accepted-1",
+        canonicalMarketId: "mkt-accepted",
+        buyVenue: "dflow",
+        sellVenue: "gemini",
+        tradeNotionalUsd: 300,
+        expectedValueUsd: 20,
+        executionMode: "paper_only",
+        noNakedExposure: { required: true, passed: true }
+      }
+    ],
+    decisionLogs: []
+  });
+
+  assert.equal(result.acceptedIntents.length, 1);
+  assert.equal(result.rejectedIntents.length, 0);
+  assert.equal(result.riskBreakerSimulation.triggered, false);
+});
+
+test("PM-O-002 classifier maps breaker causeRollup reasons to top_causes", () => {
+  const engine = new RiskEngine();
+  const first = engine.evaluatePaperArbitrageOutputs({
+    intents: [],
+    decisionLogs: [],
+    currentState: {}
+  });
+  const second = {
+    riskBreakerSimulation: {
+      triggered: true,
+      reasons: ["critical_rule_breach"],
+      criticalBreachClassifier: {
+        classification: "critical_breach",
+        causeRollup: [
+          { rank: 1, reason: "reconciliation_mismatch_threshold", category: "reconciliation_integrity", count: 3 },
+          { rank: 2, reason: "critical_rule_breach", category: "policy_integrity", count: 1 }
+        ]
+      }
+    }
+  };
+  const third = {
+    riskBreakerSimulation: {
+      triggered: true,
+      reasons: ["critical_rule_breach"],
+      criticalBreachClassifier: {
+        classification: "critical_breach",
+        causeRollup: [{ rank: 1, reason: "critical_rule_breach", category: "policy_integrity", count: 2 }]
+      }
+    }
+  };
+
+  const telemetry = buildPmO002BreachTelemetry({
+    asOfUtc: "2026-04-24T20:55:06.541Z",
+    evaluations: [first, second, third]
+  });
+
+  assert.equal(telemetry.task_id, "PM-O-002");
+  assert.equal(telemetry.critical_breach_total, 2);
+  assert.deepEqual(telemetry.top_causes, [
+    { category: "critical_rule_breach", reason: "critical_rule_breach", count: 3 },
+    { category: "reconciliation_mismatch_threshold", reason: "reconciliation_mismatch_threshold", count: 3 }
+  ]);
 });

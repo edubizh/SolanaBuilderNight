@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { rpcJsonRequestWithRetries } from "../services/execution-orchestrator/adapters/dflow/solanaRpcConfirm.mjs";
 
 const DEFAULT_LOG_DIR = ".artifacts/autobot";
 const DEFAULT_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -144,29 +145,7 @@ function summarizeEstimated(records, executedTrades) {
 }
 
 async function rpcRequest(rpcUrl, method, params) {
-  const response = await fetch(rpcUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`RPC ${method} failed (${response.status})`);
-  }
-
-  const payload = await response.json();
-  if (payload.error) {
-    throw new Error(`RPC ${method} error: ${payload.error.message}`);
-  }
-
-  return payload.result;
+  return rpcJsonRequestWithRetries(rpcUrl, method, params, { fetchImpl: globalThis.fetch });
 }
 
 function findWalletIndex(message, wallet) {
@@ -218,6 +197,22 @@ async function summarizeRealized(executedTrades, rpcUrl, usdcMint) {
       continue;
     }
 
+    if (record?.liveExecution?.status === "confirmed") {
+      const fromLog = toFiniteNumber(record?.liveExecution?.realizedNetUsd);
+      if (fromLog !== null) {
+        results.push({
+          signature,
+          wallet,
+          status: "ok",
+          source: "autobot_log",
+          timestamp: record?.timestamp ?? null,
+          realizedNetUsd: fromLog,
+          realizedUsd: fromLog,
+        });
+        continue;
+      }
+    }
+
     try {
       const tx = await rpcRequest(rpcUrl, "getTransaction", [
         signature,
@@ -252,19 +247,20 @@ async function summarizeRealized(executedTrades, rpcUrl, usdcMint) {
       const usdcDelta = Number(postUsdcAtomic - preUsdcAtomic) / 1_000_000;
       const feeLamports = Number(tx.meta.fee ?? 0);
       const solUsd = toFiniteNumber(record?.profitGate?.referencePrice?.solUsd);
-      const realizedUsd =
-        solUsd === null ? null : usdcDelta + solDelta * solUsd;
+      const realizedNetUsd = solUsd === null ? null : usdcDelta + solDelta * solUsd;
 
       results.push({
         signature,
         wallet,
         status: "ok",
+        source: "rpc_replay",
         timestamp: record?.timestamp ?? null,
         solDelta,
         usdcDelta,
         feeLamports,
         solUsd,
-        realizedUsd,
+        realizedNetUsd,
+        realizedUsd: realizedNetUsd,
       });
     } catch (error) {
       results.push({
@@ -286,10 +282,18 @@ async function summarizeRealized(executedTrades, rpcUrl, usdcMint) {
       continue;
     }
 
-    sumSolDelta += row.solDelta;
-    sumUsdcDelta += row.usdcDelta;
-    if (toFiniteNumber(row.realizedUsd) !== null) {
-      sumRealizedUsd += row.realizedUsd;
+    if (typeof row.solDelta === "number" && Number.isFinite(row.solDelta)) {
+      sumSolDelta += row.solDelta;
+    }
+    if (typeof row.usdcDelta === "number" && Number.isFinite(row.usdcDelta)) {
+      sumUsdcDelta += row.usdcDelta;
+    }
+    const net =
+      toFiniteNumber(row.realizedNetUsd) !== null
+        ? toFiniteNumber(row.realizedNetUsd)
+        : toFiniteNumber(row.realizedUsd);
+    if (net !== null) {
+      sumRealizedUsd += net;
       realizedUsdCount += 1;
     }
   }

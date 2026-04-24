@@ -122,14 +122,19 @@ function hashFingerprint(fingerprint: string): string {
   return createHash("sha256").update(fingerprint).digest("hex").slice(0, 24);
 }
 
+/** PM-R-005: 5s realtime, 30s fresh, 5m stale, else expired. */
+const FRESHNESS_REALTIME_MS = 5_000;
+const FRESHNESS_FRESH_MS = 30_000;
+const FRESHNESS_STALE_MS = 300_000;
+
 function classifyFreshness(staleByMs: number): QuoteFreshnessTier {
-  if (staleByMs <= 1_500) {
+  if (staleByMs <= FRESHNESS_REALTIME_MS) {
     return "realtime";
   }
-  if (staleByMs <= 10_000) {
+  if (staleByMs <= FRESHNESS_FRESH_MS) {
     return "fresh";
   }
-  if (staleByMs <= 60_000) {
+  if (staleByMs <= FRESHNESS_STALE_MS) {
     return "stale";
   }
   return "expired";
@@ -161,7 +166,7 @@ function classifyIntegrity(input: PredictionQuoteInput, staleByMs: number): Quot
     return "insufficient_depth";
   }
 
-  const maxAllowedStaleMs = input.maxAllowedStaleMs ?? 60_000;
+  const maxAllowedStaleMs = input.maxAllowedStaleMs ?? FRESHNESS_STALE_MS;
   if (staleByMs > maxAllowedStaleMs) {
     return "stale_rejected";
   }

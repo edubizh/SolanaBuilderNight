@@ -1,0 +1,39 @@
+{
+  "task_id": "PM-O-001",
+  "generated_at_utc": "2026-04-24T21:29:38.661Z",
+  "as_of_utc": "2026-04-24T21:29:38.000Z",
+  "evaluator_contract_version": "PM-G-001",
+  "strict_wall_clock_policy": {
+    "validated": true,
+    "policy": "STRICT_UTC_WALL_CLOCK",
+    "notes": [
+      "UTC day completion only; no rolling 24h windows.",
+      "Counts must equal floor((UTC day start(as_of_utc) - UTC day start(started_at)) / 86400000).",
+      "Milliseconds within a UTC day do not earn fractional day credit."
+    ],
+    "expected_from_context": {
+      "paper_days_completed": 7,
+      "guarded_live_days_completed": 3
+    }
+  },
+  "retention_policy": {
+    "mode": "deterministic_keep_latest_utc_stamps",
+    "retention_runs": 9999
+  },
+  "evaluator": {
+    "as_of_utc": "2026-04-24T21:29:38Z",
+    "paper_days_completed": 7,
+    "guarded_live_days_completed": 3,
+    "realized_pnl_usd": 0,
+    "critical_risk_breaches": 15,
+    "overall_pass": false,
+    "failed_criteria": [
+      "realized_pnl_positive_requirement",
+      "critical_risk_breach_requirement"
+    ]
+  },
+  "remaining_to_unlock": [
+    "Raise realized PnL above 0 USD.",
+    "Reduce critical risk breaches to 0."
+  ]
+}

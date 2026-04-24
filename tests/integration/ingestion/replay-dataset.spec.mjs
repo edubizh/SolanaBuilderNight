@@ -34,7 +34,7 @@ test("replay dataset normalizes into deterministic canonical ingestion frames", 
   assert.equal(pyth.payload.publishTimeSec, 1_776_787_202);
   assert.equal(pyth.payload.price, "133.27");
   assert.equal(pyth.payload.quoteQuality.integrity_status, "ok");
-  assert.equal(pyth.payload.quoteQuality.freshness_tier, "fresh");
+  assert.equal(pyth.payload.quoteQuality.freshness_tier, "realtime");
 
   const helius = bySource.get("helius");
   assert.ok(helius);

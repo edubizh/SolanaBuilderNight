@@ -1,0 +1,17 @@
+{
+  "task_id": "PM-O-002",
+  "as_of_utc": "2026-04-24T21:32:31Z",
+  "critical_breach_total": 15,
+  "top_causes": [
+    {
+      "category": "critical_rule_breach",
+      "reason": "critical_rule_breach",
+      "count": 23
+    },
+    {
+      "category": "reconciliation_mismatch_threshold",
+      "reason": "reconciliation_mismatch_threshold",
+      "count": 15
+    }
+  ]
+}

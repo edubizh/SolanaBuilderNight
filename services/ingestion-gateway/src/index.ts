@@ -33,3 +33,14 @@ export function registerDefaultConnectors(service: IngestionGatewayService): voi
 
 export { CoinGeckoConnector, PythHermesConnector, HeliusStreamConnector };
 export { INGESTION_REPLAY_DATASET };
+export {
+  mapDflowQuoteToPreCanonical,
+  mapGeminiQuoteToPreCanonical,
+  mapPnpQuoteToPreCanonical
+} from "./prediction-quote-mappers.ts";
+export type {
+  DflowRawQuoteMapInput,
+  GeminiRawQuoteMapInput,
+  PnpRawQuoteMapInput,
+  PreCanonicalPredictionQuote
+} from "./prediction-quote-mappers.ts";

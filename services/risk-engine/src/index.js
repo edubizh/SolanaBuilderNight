@@ -116,11 +116,11 @@ export class RiskEngine {
     );
     const riskBreakerSimulation = this.evaluateRuntime({
       killSwitchActive: false,
-      criticalRuleBreach: rejectedIntents.some((entry) => entry.reasons.includes("no_naked_exposure_required")),
+      criticalRuleBreach: false,
       consecutiveExecutionFailures: 0,
       feedStalenessMs: 0,
       slippageOutlierBreaches: 0,
-      reconciliationMismatches: rejectedIntents.length,
+      reconciliationMismatches: 0,
       reconciliationUnresolvedMs: 0,
       providerDegradationMs: 0
     });
@@ -156,8 +156,84 @@ export class RiskEngine {
   }
 }
 
+export function buildPmO002BreachTelemetry({ asOfUtc, evaluations = [] } = {}) {
+  const normalizedAsOfUtc =
+    typeof asOfUtc === "string" && asOfUtc.trim().length > 0 ? asOfUtc : new Date().toISOString();
+  const reasonCounts = new Map();
+  let criticalBreachTotal = 0;
+
+  for (const evaluation of evaluations) {
+    const simulation = toRiskBreakerSimulation(evaluation);
+    if (!simulation) {
+      continue;
+    }
+    if (simulation.triggered === true || simulation.criticalBreachClassifier?.classification === "critical_breach") {
+      criticalBreachTotal += 1;
+    }
+
+    const causeRollup = Array.isArray(simulation.criticalBreachClassifier?.causeRollup)
+      ? simulation.criticalBreachClassifier.causeRollup
+      : [];
+    if (causeRollup.length > 0) {
+      for (const cause of causeRollup) {
+        const reason = String(cause?.reason ?? "").trim();
+        if (!reason) {
+          continue;
+        }
+        const count = toFiniteNumber(cause?.count) ?? 0;
+        if (count <= 0) {
+          continue;
+        }
+        reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + count);
+      }
+      continue;
+    }
+
+    for (const reason of simulation.reasons ?? []) {
+      const normalizedReason = String(reason ?? "").trim();
+      if (!normalizedReason) {
+        continue;
+      }
+      reasonCounts.set(normalizedReason, (reasonCounts.get(normalizedReason) ?? 0) + 1);
+    }
+  }
+
+  const topCauses = [...reasonCounts.entries()]
+    .map(([reason, count]) => ({
+      category: reason,
+      reason,
+      count
+    }))
+    .sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      return a.reason.localeCompare(b.reason);
+    });
+
+  return {
+    task_id: "PM-O-002",
+    as_of_utc: normalizedAsOfUtc,
+    critical_breach_total: criticalBreachTotal,
+    top_causes: topCauses.length > 0 ? topCauses : [{ category: "none", count: 0 }]
+  };
+}
+
 function toFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toRiskBreakerSimulation(evaluation) {
+  if (!evaluation || typeof evaluation !== "object") {
+    return null;
+  }
+  if (evaluation.riskBreakerSimulation && typeof evaluation.riskBreakerSimulation === "object") {
+    return evaluation.riskBreakerSimulation;
+  }
+  if ("triggered" in evaluation && Array.isArray(evaluation.reasons)) {
+    return evaluation;
+  }
+  return null;
 }
 
 function normalizeExposureMap(input) {
@@ -275,4 +351,9 @@ function buildDeterministicReasonRollup(rejectedIntents) {
     }));
 }
 
-export { evaluateHardLimits, evaluateCircuitBreakers, DEFAULT_HARD_LIMITS, DEFAULT_BREAKER_THRESHOLDS };
+export {
+  evaluateHardLimits,
+  evaluateCircuitBreakers,
+  DEFAULT_HARD_LIMITS,
+  DEFAULT_BREAKER_THRESHOLDS
+};

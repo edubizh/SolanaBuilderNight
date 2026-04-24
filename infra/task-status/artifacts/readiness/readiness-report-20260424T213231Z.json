@@ -1,0 +1,83 @@
+{
+  "task_id": "PM-O-005",
+  "generated_at_utc": "2026-04-24T21:33:18.133Z",
+  "as_of_utc": "2026-04-24T21:32:31.000Z",
+  "sources": {
+    "promotion_snapshot_path": "/Users/elidubizh/Desktop/SolanaBuilderNight/infra/task-status/artifacts/promotion-gate/promotion-gate-daily-snapshot-20260424T212938Z.json",
+    "risk_telemetry_path": "/Users/elidubizh/Desktop/SolanaBuilderNight/infra/task-status/artifacts/pm-o-002-risk-telemetry-20260424T213231Z.json",
+    "opportunity_telemetry_path": "/Users/elidubizh/Desktop/SolanaBuilderNight/infra/task-status/artifacts/pm-o-003-opportunity-telemetry-20260424T205506Z.json",
+    "dflow_evidence_path": "/Users/elidubizh/Desktop/SolanaBuilderNight/infra/task-status/artifacts/pm-c-001-guarded-evidence-20260424T203340Z.json",
+    "gemini_evidence_path": "/Users/elidubizh/Desktop/SolanaBuilderNight/infra/task-status/artifacts/pm-c-002-guarded-evidence-20260424T203551Z.json",
+    "prior_report_path": "/Users/elidubizh/Desktop/SolanaBuilderNight/infra/task-status/artifacts/readiness/readiness-report-20260424T212938Z.json"
+  },
+  "gate_status": {
+    "promotion_gate": false,
+    "risk_breach_gate": false,
+    "opportunity_signal_gate": false,
+    "reliability_gate": true,
+    "overall_ready": false
+  },
+  "blockers": [
+    "promotion_gate_failed:realized_pnl_positive_requirement",
+    "promotion_gate_failed:critical_risk_breach_requirement",
+    "critical_breach_total:15",
+    "opportunity_signal_gate:accepted_count_zero"
+  ],
+  "trend_summary": {
+    "baseline": false,
+    "summary": "realized_pnl_usd +0; critical_breach_total +0; accepted_count +0; skipped_count +0; expected_net_usd_p50 +0",
+    "deltas": {
+      "realized_pnl_usd": 0,
+      "critical_breach_total": 0,
+      "accepted_count": 0,
+      "skipped_count": 0,
+      "expected_net_usd_p50": 0
+    }
+  },
+  "current": {
+    "promotion": {
+      "overall_pass": false,
+      "failed_criteria": [
+        "realized_pnl_positive_requirement",
+        "critical_risk_breach_requirement"
+      ],
+      "realized_pnl_usd": 0,
+      "critical_risk_breaches": 15
+    },
+    "risk": {
+      "critical_breach_total": 15,
+      "top_causes": [
+        {
+          "category": "critical_rule_breach",
+          "reason": "critical_rule_breach",
+          "count": 23
+        },
+        {
+          "category": "reconciliation_mismatch_threshold",
+          "reason": "reconciliation_mismatch_threshold",
+          "count": 15
+        }
+      ]
+    },
+    "opportunity": {
+      "accepted_count": 0,
+      "skipped_count": 27,
+      "expected_net_usd_p50": -0.15,
+      "expected_net_usd_p90": 0.82
+    },
+    "reliability": {
+      "dflow_checks": {
+        "guardedModeOnly": true,
+        "riskCapsConfigured": true,
+        "noNakedExposureEnforced": true,
+        "approvalTrailRequired": true
+      },
+      "gemini_checks": {
+        "guardedModeOnly": true,
+        "riskCapsConfigured": true,
+        "noNakedExposureEnforced": true,
+        "approvalTrailRequired": true
+      }
+    }
+  }
+}

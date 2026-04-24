@@ -1,0 +1,365 @@
+{
+  "as_of_utc": "2026-04-24T21:32:31Z",
+  "evaluations": [
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 2
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 1
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 2
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 1
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 2
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 1
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 2
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 1
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 2
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 1
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 2
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 1
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 2
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 1
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "riskBreakerSimulation": {
+        "triggered": true,
+        "reasons": [
+          "critical_rule_breach",
+          "reconciliation_mismatch_threshold"
+        ],
+        "criticalBreachClassifier": {
+          "classification": "critical_breach",
+          "causeRollup": [
+            {
+              "rank": 1,
+              "reason": "critical_rule_breach",
+              "count": 2
+            },
+            {
+              "rank": 2,
+              "reason": "reconciliation_mismatch_threshold",
+              "count": 1
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -31,6 +31,12 @@ export type {
   PredictionQuoteInput,
   PredictionQuoteQualityMetadata
 } from "./prediction-canonicalization.ts";
+export { buildPredictionQuoteTraceId, normalizePredictionQuotes } from "./normalize-prediction-quotes.ts";
+export type {
+  CanonicalQuoteInput,
+  NormalizePredictionQuotesInput,
+  PreCanonicalPredictionQuote
+} from "./normalize-prediction-quotes.ts";
 
 export function normalizeDecimal(priceAtomic: bigint, decimals: number): string {
   if (decimals < 0) {

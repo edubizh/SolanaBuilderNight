@@ -1,0 +1,12 @@
+{
+  "as_of_utc": "2026-04-24T21:29:38Z",
+  "paper_days_completed": 7,
+  "guarded_live_days_completed": 3,
+  "realized_pnl_usd": 0,
+  "critical_risk_breaches": 15,
+  "overall_pass": false,
+  "failed_criteria": [
+    "realized_pnl_positive_requirement",
+    "critical_risk_breach_requirement"
+  ]
+}
