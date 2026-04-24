@@ -1,0 +1,19 @@
+exit_code=1
+stdout:
+
+stderr:
+file:///Users/elidubizh/Desktop/SolanaBuilderNight/infra/ci/build-promotion-gate-daily-artifacts.mjs:24
+  throw new Error(`promotion-gate-daily-artifacts: ${message}`);
+        ^
+
+Error: promotion-gate-daily-artifacts: BLOCKER_REASON=missing_required_input:guarded_live_started_at_utc_ms; Missing required context field: guarded_live_started_at_utc_ms
+    at fail (file:///Users/elidubizh/Desktop/SolanaBuilderNight/infra/ci/build-promotion-gate-daily-artifacts.mjs:24:9)
+    at failMissingRequiredInput (file:///Users/elidubizh/Desktop/SolanaBuilderNight/infra/ci/build-promotion-gate-daily-artifacts.mjs:28:3)
+    at ensureContextContract (file:///Users/elidubizh/Desktop/SolanaBuilderNight/infra/ci/build-promotion-gate-daily-artifacts.mjs:81:7)
+    at file:///Users/elidubizh/Desktop/SolanaBuilderNight/infra/ci/build-promotion-gate-daily-artifacts.mjs:184:1
+    at ModuleJob.run (node:internal/modules/esm/module_job:371:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:669:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.6.0
+

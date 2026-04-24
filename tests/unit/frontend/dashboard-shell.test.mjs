@@ -6,6 +6,8 @@ import { createAuthorizedActionRequest } from "../../../apps/frontend-console/sr
 import { createDashboardSnapshot } from "../../../apps/frontend-console/src/lib/live-dashboard.ts";
 import { buildConfigApprovalTimeline } from "../../../apps/frontend-console/src/lib/config-approvals.ts";
 import { resolveEntitlementState } from "../../../apps/frontend-console/src/lib/commerce-entitlements.ts";
+import { evaluatePromotionGate } from "../../../services/control-plane-api/src/routes/promotion-gate.ts";
+import { enforcePromotionBoardState } from "../../../services/control-plane-api/src/routes/promotion-board-enforcement.ts";
 
 test("console scaffold exposes required route groups", () => {
   const shell = createConsoleShell();
@@ -191,4 +193,98 @@ test("config approval timeline and commerce entitlement verification stay determ
   assert.equal(timeline.events[0].eventId, "evt_1");
   assert.equal(entitlement.active, true);
   assert.equal(entitlement.plan, "operator_pro");
+});
+
+test("promotion evaluator counts completed days using strict UTC wall-clock boundaries", () => {
+  const result = evaluatePromotionGate({
+    asOfUtcMs: Date.parse("2026-04-24T00:00:00.000Z"),
+    paperStartedAtUtcMs: Date.parse("2026-04-17T23:59:59.999Z"),
+    guardedLiveStartedAtUtcMs: Date.parse("2026-04-21T00:00:00.000Z"),
+    realizedPnlUsd: 10.5,
+    criticalRiskBreaches: 0
+  });
+
+  assert.equal(result.paper_days_completed, 7);
+  assert.equal(result.guarded_live_days_completed, 3);
+  assert.equal(result.overall_pass, true);
+  assert.deepEqual(result.failed_criteria, []);
+});
+
+test("promotion evaluator reports deterministic missing-input blockers and ordered failures", () => {
+  const result = evaluatePromotionGate({
+    asOfUtcMs: Date.parse("2026-04-24T12:00:00.000Z"),
+    realizedPnlUsd: -2,
+    criticalRiskBreaches: 3
+  });
+
+  assert.equal(result.overall_pass, false);
+  assert.deepEqual(result.failed_criteria, [
+    "missing_required_input:guarded_live_started_at_utc_ms",
+    "missing_required_input:paper_started_at_utc_ms",
+    "paper_days_requirement",
+    "guarded_live_days_requirement",
+    "realized_pnl_positive_requirement",
+    "critical_risk_breach_requirement"
+  ]);
+});
+
+test("board enforcement keeps PM-D-001 blocked with exact failed criteria when evaluator fails", () => {
+  const board = `| ID | Owner | DependsOn | Scope | StageGate | EvidenceRequired | Status | Notes |
+|---|---|---|---|---|---|---|---|
+| PM-D-001 | Worker 5 (PNP Execution Hardening) | PM-C-001, PM-C-002, PROMOTION-GATE | \`services/execution-orchestrator/adapters/pnp/**\`, \`services/position-settlement-service/adapters/pnp/**\`, \`infra/**\`, \`docs/runbooks/**\` | Stage D | Promotion-gate evidence bundle (7d paper, 3d live, positive realized PnL, zero critical breaches) | BLOCKED | old note |`;
+  const evaluatorResult = {
+    as_of_utc: "2026-04-24T00:00:00.000Z",
+    paper_days_completed: 6,
+    guarded_live_days_completed: 2,
+    realized_pnl_usd: -5,
+    critical_risk_breaches: 1,
+    overall_pass: false,
+    failed_criteria: [
+      "paper_days_requirement",
+      "guarded_live_days_requirement",
+      "realized_pnl_positive_requirement",
+      "critical_risk_breach_requirement"
+    ]
+  };
+
+  const result = enforcePromotionBoardState({ boardMarkdown: board, evaluatorResult });
+  assert.equal(result.pmD001Status, "BLOCKED");
+  assert.equal(
+    result.pmD001Notes,
+    "Hard gate: evaluator overall_pass=false. Failed criteria: paper_days_requirement, guarded_live_days_requirement, realized_pnl_positive_requirement, critical_risk_breach_requirement. BLOCKED on `PROMOTION-GATE`."
+  );
+  assert.match(
+    result.updatedBoardMarkdown,
+    /\| PM-D-001 .* \| BLOCKED \| Hard gate: evaluator overall_pass=false\. Failed criteria: paper_days_requirement, guarded_live_days_requirement, realized_pnl_positive_requirement, critical_risk_breach_requirement\. BLOCKED on `PROMOTION-GATE`\. \|/
+  );
+});
+
+test("board enforcement promotes PM-D-001 to ready when evaluator passes and records evidence path", () => {
+  const board = `| ID | Owner | DependsOn | Scope | StageGate | EvidenceRequired | Status | Notes |
+|---|---|---|---|---|---|---|---|
+| PM-D-001 | Worker 5 (PNP Execution Hardening) | PM-C-001, PM-C-002, PROMOTION-GATE | \`services/execution-orchestrator/adapters/pnp/**\`, \`services/position-settlement-service/adapters/pnp/**\`, \`infra/**\`, \`docs/runbooks/**\` | Stage D | Promotion-gate evidence bundle (7d paper, 3d live, positive realized PnL, zero critical breaches) | BLOCKED | old note |`;
+  const evaluatorResult = {
+    as_of_utc: "2026-04-24T00:00:00.000Z",
+    paper_days_completed: 7,
+    guarded_live_days_completed: 3,
+    realized_pnl_usd: 25,
+    critical_risk_breaches: 0,
+    overall_pass: true,
+    failed_criteria: []
+  };
+
+  const result = enforcePromotionBoardState({
+    boardMarkdown: board,
+    evaluatorResult,
+    evidencePath: "artifacts/promotion-gate/2026-04-24/evaluator.json"
+  });
+  assert.equal(result.pmD001Status, "READY");
+  assert.equal(
+    result.pmD001Notes,
+    "Promotion gate passed by evaluator (overall_pass=true). Evidence: `artifacts/promotion-gate/2026-04-24/evaluator.json`."
+  );
+  assert.match(
+    result.updatedBoardMarkdown,
+    /\| PM-D-001 .* \| READY \| Promotion gate passed by evaluator \(overall_pass=true\)\. Evidence: `artifacts\/promotion-gate\/2026-04-24\/evaluator\.json`\.\s\|/
+  );
 });

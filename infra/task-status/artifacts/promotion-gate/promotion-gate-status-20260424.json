@@ -1,0 +1,10 @@
+{
+  "task_id": "PM-G-002",
+  "scaffold": true,
+  "as_of_utc": "2026-04-24T00:00:00Z",
+  "status": "BLOCKED",
+  "blocked_on": "PM-G-001",
+  "remaining_to_unlock": [
+    "Await evaluator core schema/CLI contract from PM-G-001"
+  ]
+}
