@@ -161,3 +161,99 @@ test("manual kill-switch takes priority and still captures additional breakers",
   assert.ok(runtimeDecision.reasons.includes("reconciliation_unresolved_drift_timeout"));
   assert.equal(runtimeDecision.killSwitch.mode, "manual");
 });
+
+test("paper arbitrage risk controls approve safe intents and emit deterministic logs", () => {
+  const engine = new RiskEngine();
+  const result = engine.evaluatePaperArbitrageOutputs({
+    nowMs: 44_000,
+    currentState: {
+      aggregateOpenExposureUsd: 1_000,
+      projectedDailyPaperLossUsd: 100,
+      exposureByMarket: { "mkt-a": 300 },
+      exposureByVenue: { dflow: 700, gemini: 800 }
+    },
+    intents: [
+      {
+        intentId: "intent-b",
+        traceId: "trace-2",
+        canonicalMarketId: "mkt-b",
+        buyVenue: "dflow",
+        sellVenue: "gemini",
+        tradeNotionalUsd: 400,
+        expectedValueUsd: 10,
+        executionMode: "paper_only",
+        noNakedExposure: { required: true, passed: true }
+      },
+      {
+        intentId: "intent-a",
+        traceId: "trace-1",
+        canonicalMarketId: "mkt-a",
+        buyVenue: "gemini",
+        sellVenue: "dflow",
+        tradeNotionalUsd: 500,
+        expectedValueUsd: 12,
+        executionMode: "paper_only",
+        noNakedExposure: { required: true, passed: true }
+      }
+    ],
+    decisionLogs: []
+  });
+
+  assert.equal(result.acceptedIntents.length, 2);
+  assert.equal(result.rejectedIntents.length, 0);
+  assert.deepEqual(
+    result.accountingLogs.map((entry) => entry.intentId),
+    ["intent-a", "intent-b"]
+  );
+  assert.equal(result.accountingLogs[0].sequence, 1);
+  assert.equal(result.accountingLogs[1].sequence, 2);
+  assert.equal(result.exposureSnapshot.aggregateOpenExposureUsd, 1_900);
+  assert.equal(result.riskBreakerSimulation.triggered, false);
+});
+
+test("paper arbitrage risk controls enforce no-naked-exposure and conservative limits", () => {
+  const engine = new RiskEngine({
+    paperArbPolicy: {
+      maxIntentNotionalUsd: 1_000,
+      maxAggregateOpenExposureUsd: 2_000,
+      maxMarketOpenExposureUsd: 1_500,
+      maxVenueOpenExposureUsd: 1_500,
+      maxProjectedPaperLossUsd: 200
+    }
+  });
+
+  const result = engine.evaluatePaperArbitrageOutputs({
+    nowMs: 55_000,
+    currentState: {
+      aggregateOpenExposureUsd: 1_200,
+      projectedDailyPaperLossUsd: 50,
+      exposureByMarket: { "mkt-a": 1_100 },
+      exposureByVenue: { dflow: 1_200, gemini: 100 }
+    },
+    intents: [
+      {
+        intentId: "intent-risk",
+        traceId: "trace-risk",
+        canonicalMarketId: "mkt-a",
+        buyVenue: "dflow",
+        sellVenue: "gemini",
+        tradeNotionalUsd: 1_100,
+        expectedValueUsd: -250,
+        executionMode: "paper_only",
+        noNakedExposure: { required: true, passed: false }
+      }
+    ],
+    decisionLogs: []
+  });
+
+  assert.equal(result.acceptedIntents.length, 0);
+  assert.equal(result.rejectedIntents.length, 1);
+  assert.ok(result.rejectedIntents[0].reasons.includes("no_naked_exposure_required"));
+  assert.ok(result.rejectedIntents[0].reasons.includes("paper_intent_notional_limit_exceeded"));
+  assert.ok(result.rejectedIntents[0].reasons.includes("aggregate_open_exposure_limit_exceeded"));
+  assert.ok(result.rejectedIntents[0].reasons.includes("market_open_exposure_limit_exceeded"));
+  assert.ok(result.rejectedIntents[0].reasons.includes("projected_paper_loss_limit_exceeded"));
+  assert.equal(result.accountingLogs[0].decision, "rejected");
+  assert.equal(result.riskBreakerSimulation.triggered, true);
+  assert.equal(result.riskBreakerSimulation.reason, "critical_rule_breach");
+});

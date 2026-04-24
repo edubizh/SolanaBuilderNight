@@ -49,6 +49,39 @@
           "legendFormat": "{{provider}}"
         }
       ]
+    },
+    {
+      "id": 5,
+      "title": "Prediction Ingestion Lag p95 (ms)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ingestion_lag_ms_bucket{pipeline=\"prediction_markets\"}[5m])) by (le))",
+          "legendFormat": "ingestion_lag_ms_p95"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Quote Integrity Failure Ratio",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(quote_integrity_failures_total[5m])) / clamp_min(sum(rate(quote_integrity_checks_total[5m])), 1)",
+          "legendFormat": "quote_integrity_failure_ratio"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Stale Quotes by Venue (5m)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(stale_quote_rejections_total[5m])) by (venue)",
+          "legendFormat": "{{venue}}"
+        }
+      ]
     }
   ]
 }

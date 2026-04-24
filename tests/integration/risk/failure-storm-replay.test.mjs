@@ -73,3 +73,61 @@ test("risk replay storm captures multi-vector failures in deterministic reason o
   assert.equal(runtimeDecision.killSwitch.mode, "automatic");
   assert.equal(runtimeDecision.killSwitch.resumeRequiresApproval, true);
 });
+
+test("paper arbitrage rejection storm engages simulated breaker with deterministic reasons", () => {
+  const engine = new RiskEngine({
+    paperArbPolicy: {
+      maxIntentNotionalUsd: 900,
+      maxAggregateOpenExposureUsd: 1_500,
+      maxMarketOpenExposureUsd: 1_200,
+      maxVenueOpenExposureUsd: 1_200,
+      maxProjectedPaperLossUsd: 100
+    }
+  });
+
+  const result = engine.evaluatePaperArbitrageOutputs({
+    nowMs: 99_000,
+    currentState: {
+      aggregateOpenExposureUsd: 800,
+      projectedDailyPaperLossUsd: 40,
+      exposureByMarket: { "market-x": 700 },
+      exposureByVenue: { dflow: 700, gemini: 300 }
+    },
+    intents: [
+      {
+        intentId: "intent-a",
+        traceId: "trace-a",
+        canonicalMarketId: "market-x",
+        buyVenue: "dflow",
+        sellVenue: "gemini",
+        tradeNotionalUsd: 950,
+        expectedValueUsd: -70,
+        executionMode: "paper_only",
+        noNakedExposure: { required: true, passed: false }
+      },
+      {
+        intentId: "intent-b",
+        traceId: "trace-b",
+        canonicalMarketId: "market-y",
+        buyVenue: "dflow",
+        sellVenue: "gemini",
+        tradeNotionalUsd: 950,
+        expectedValueUsd: -80,
+        executionMode: "paper_only",
+        noNakedExposure: { required: true, passed: false }
+      }
+    ],
+    decisionLogs: []
+  });
+
+  assert.equal(result.acceptedIntents.length, 0);
+  assert.equal(result.rejectedIntents.length, 2);
+  assert.equal(result.accountingLogs[0].intentId, "intent-a");
+  assert.equal(result.accountingLogs[1].intentId, "intent-b");
+  assert.equal(result.riskBreakerSimulation.triggered, true);
+  assert.equal(result.riskBreakerSimulation.reason, "critical_rule_breach");
+  assert.deepEqual(result.riskBreakerSimulation.reasons, [
+    "critical_rule_breach",
+    "reconciliation_mismatch_threshold"
+  ]);
+});

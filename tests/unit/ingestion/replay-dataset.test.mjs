@@ -10,4 +10,14 @@ test("ingestion replay dataset includes all required provider frames", () => {
 
   const providers = INGESTION_REPLAY_DATASET.frames.map((frame) => frame.source).sort();
   assert.deepEqual(providers, ["coingecko", "helius", "pyth-hermes"]);
+
+  for (const frame of INGESTION_REPLAY_DATASET.frames) {
+    assert.ok(frame.venueEventId.length > 0);
+    assert.ok(frame.venueMarketId.length > 0);
+    assert.ok(frame.venueOutcomeId.length > 0);
+    assert.ok(frame.eventTitle.length > 0);
+    assert.ok(frame.eventStartAt.length > 0);
+    assert.ok(frame.marketQuestion.length > 0);
+    assert.ok(frame.outcomeLabel.length > 0);
+  }
 });

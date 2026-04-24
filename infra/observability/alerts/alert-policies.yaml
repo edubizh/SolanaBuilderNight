@@ -1,7 +1,7 @@
 version: 1
 metadata:
   owner_agent: "8"
-  task_id: "A8-S4-05"
+  task_id: "PM-A-006"
   scope: "observability-bootstrap"
   source_of_truth: "infra/observability/alerts/alert-policies.yaml"
 
@@ -77,3 +77,93 @@ policies:
       category: slos
       rollback_candidate: "true"
       runbook: docs/runbooks/observability-bootstrap.md#slo-collapse-and-rollback-evaluation
+
+  - id: prediction_ingestion_lag_breach
+    description: Prediction ingestion p95 lag exceeds Stage A budget.
+    expr: histogram_quantile(0.95, sum(rate(ingestion_lag_ms_bucket{pipeline="prediction_markets"}[10m])) by (le)) > 2500
+    for: 10m
+    severity: sev2
+    labels:
+      category: ingestion
+      stage_gate: stage-a
+      runbook: docs/runbooks/prediction-stage-a-observability.md#ingestion-lag-triage
+
+  - id: prediction_quote_integrity_failure_spike
+    description: Quote integrity failures exceed 1% over 10m window.
+    expr: sum(rate(quote_integrity_failures_total[10m])) / clamp_min(sum(rate(quote_integrity_checks_total[10m])), 1) > 0.01
+    for: 10m
+    severity: sev2
+    labels:
+      category: quote-integrity
+      stage_gate: stage-a
+      runbook: docs/runbooks/prediction-stage-a-observability.md#quote-integrity-failure-triage
+
+  - id: prediction_stale_quote_rejection_spike
+    description: Stale quote rejections indicate feed degradation.
+    expr: sum(rate(stale_quote_rejections_total[10m])) by (venue) > 0.5
+    for: 10m
+    severity: sev2
+    labels:
+      category: quote-freshness
+      stage_gate: stage-a
+      runbook: docs/runbooks/prediction-stage-a-observability.md#stale-quote-triage
+
+  - id: prediction_dflow_guarded_rejection_spike
+    description: Guarded-live risk rejections are elevated and may indicate cap drift.
+    expr: sum(rate(dflow_guarded_rejections_total[10m])) > 0.2
+    for: 10m
+    severity: sev2
+    labels:
+      category: execution-guardrails
+      stage_gate: stage-c
+      runbook: docs/runbooks/prediction-stage-c-dflow-guarded-live.md#guarded-rejection-triage
+
+  - id: prediction_dflow_live_without_approval
+    description: Any live execution without approval trail is a hard policy breach.
+    expr: increase(dflow_live_without_approval_total[1m]) > 0
+    for: 0m
+    severity: sev1
+    labels:
+      category: execution-approval
+      stage_gate: stage-c
+      runbook: docs/runbooks/prediction-stage-c-dflow-guarded-live.md#approval-trail-breach
+
+  - id: prediction_dflow_naked_exposure_violation
+    description: No-naked-exposure guard should never be bypassed in Stage C.
+    expr: increase(dflow_naked_exposure_violations_total[1m]) > 0
+    for: 0m
+    severity: sev1
+    labels:
+      category: risk
+      stage_gate: stage-c
+      runbook: docs/runbooks/prediction-stage-c-dflow-guarded-live.md#naked-exposure-violation
+
+  - id: prediction_gemini_guarded_rejection_spike
+    description: Gemini guarded-live risk rejections are elevated and may indicate cap drift.
+    expr: sum(rate(gemini_guarded_rejections_total[10m])) > 0.2
+    for: 10m
+    severity: sev2
+    labels:
+      category: execution-guardrails
+      stage_gate: stage-c
+      runbook: docs/runbooks/prediction-stage-c-gemini-guarded-live.md#guarded-rejection-triage
+
+  - id: prediction_gemini_live_without_approval
+    description: Any Gemini live execution without approval trail is a hard policy breach.
+    expr: increase(gemini_live_without_approval_total[1m]) > 0
+    for: 0m
+    severity: sev1
+    labels:
+      category: execution-approval
+      stage_gate: stage-c
+      runbook: docs/runbooks/prediction-stage-c-gemini-guarded-live.md#approval-trail-breach
+
+  - id: prediction_gemini_naked_exposure_violation
+    description: Gemini no-naked-exposure guard should never be bypassed in Stage C.
+    expr: increase(gemini_naked_exposure_violations_total[1m]) > 0
+    for: 0m
+    severity: sev1
+    labels:
+      category: risk
+      stage_gate: stage-c
+      runbook: docs/runbooks/prediction-stage-c-gemini-guarded-live.md#naked-exposure-violation

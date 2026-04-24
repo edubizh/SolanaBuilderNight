@@ -5,3 +5,4 @@ export {
   filterEligibleCandidates,
   getStrategyModeConfig,
 } from "./strategy.js";
+export { runPaperArbitrageLoop } from "./paperArbLoop.js";

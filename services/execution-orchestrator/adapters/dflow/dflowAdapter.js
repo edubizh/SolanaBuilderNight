@@ -2,6 +2,13 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_TX_ENCODING = "base64";
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 250;
 const DEFAULT_STATUS_MAX_ATTEMPTS = 20;
+const DEFAULT_QUOTE_FRESHNESS_MAX_AGE_MS = 15_000;
+const DEFAULT_ORDER_STATUS_FRESHNESS_MAX_AGE_MS = 30_000;
+const DEFAULT_GUARDED_MODE = "dry_run";
+const DEFAULT_MAX_NOTIONAL_USD = 250;
+const DEFAULT_MAX_DAILY_NOTIONAL_USD = 2_500;
+const DEFAULT_MAX_SLIPPAGE_BPS = 75;
+const DEFAULT_APPROVAL_TTL_MS = 15 * 60_000;
 const DEFAULT_STATUS_TERMINAL_STATES = new Set([
   "filled",
   "succeeded",
@@ -33,6 +40,10 @@ export class DFlowAdapter {
     this.sleepImpl = config.sleepImpl ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.idempotentSubmissionStore = config.idempotentSubmissionStore ?? new Map();
     this.terminalStateStore = config.terminalStateStore ?? new Map();
+    this.guardrailConfig = this.#createGuardrailConfig(config.guardrails);
+    this.approvalStore = config.approvalStore ?? new Map();
+    this.executionAuditTrail = config.executionAuditTrail ?? [];
+    this.dailyNotionalLedger = config.dailyNotionalLedger ?? new Map();
   }
 
   /**
@@ -144,6 +155,40 @@ export class DFlowAdapter {
   }
 
   /**
+   * Fetch /quote and return deterministic integrity evaluation output.
+   * @param {Record<string, string | number | boolean | undefined>} params
+   * @param {object} [options]
+   * @param {number} [options.nowMs]
+   * @param {number} [options.maxAgeMs]
+   * @param {boolean} [options.throwOnError]
+   */
+  async getQuoteIntegrity(params, options = {}) {
+    const quote = await this.getQuote(params);
+    return this.validateQuoteIntegrity(quote, options);
+  }
+
+  /**
+   * Validate /quote response freshness and canonical identifiers.
+   * @param {unknown} quoteResponse
+   * @param {object} [options]
+   * @param {number} [options.nowMs]
+   * @param {number} [options.maxAgeMs]
+   * @param {boolean} [options.throwOnError]
+   */
+  validateQuoteIntegrity(quoteResponse, options = {}) {
+    const evaluated = this.#evaluateIntegrity(quoteResponse, {
+      responseType: "quote",
+      nowMs: options.nowMs,
+      maxAgeMs: options.maxAgeMs,
+      defaultMaxAgeMs: DEFAULT_QUOTE_FRESHNESS_MAX_AGE_MS,
+    });
+    if (options.throwOnError && !evaluated.ok) {
+      throw new Error(`DFlow quote integrity validation failed: ${evaluated.errors.join("; ")}`);
+    }
+    return evaluated;
+  }
+
+  /**
    * @param {Record<string, unknown>} payload
    */
   async postSwap(payload) {
@@ -213,10 +258,244 @@ export class DFlowAdapter {
   }
 
   /**
+   * Create an approval token required for guarded-live submissions.
+   * @param {object} request
+   * @param {string} request.intentId
+   * @param {number} request.estimatedNotionalUsd
+   * @param {string} request.approvedBy
+   * @param {number} [request.approvedAtMs]
+   * @param {number} [request.expiresAtMs]
+   * @param {string} [request.approvalId]
+   */
+  createGuardedLiveApproval(request) {
+    const intentId = this.#asNonEmptyString(request?.intentId);
+    const approvedBy = this.#asNonEmptyString(request?.approvedBy);
+    const estimatedNotionalUsd = this.#asFiniteNumber(request?.estimatedNotionalUsd);
+    if (!intentId || !approvedBy || estimatedNotionalUsd === null) {
+      throw new Error("Guarded-live approval requires intentId, approvedBy, and estimatedNotionalUsd");
+    }
+
+    const approvedAtMs = Number.isFinite(request?.approvedAtMs) ? Number(request.approvedAtMs) : Date.now();
+    const expiresAtMs = Number.isFinite(request?.expiresAtMs)
+      ? Number(request.expiresAtMs)
+      : approvedAtMs + this.guardrailConfig.approvalTtlMs;
+    const approvalId = this.#asNonEmptyString(request?.approvalId) ?? `dflow-approval-${intentId}-${approvedAtMs}`;
+
+    const approval = {
+      approvalId,
+      intentId,
+      estimatedNotionalUsd,
+      approvedBy,
+      approvedAtMs,
+      expiresAtMs,
+      createdAtMs: Date.now(),
+      used: false,
+      usedAtMs: null,
+    };
+    this.approvalStore.set(approvalId, approval);
+    this.#recordAudit("approval_created", {
+      approvalId,
+      intentId,
+      estimatedNotionalUsd,
+      approvedBy,
+      expiresAtMs,
+    });
+    return approval;
+  }
+
+  /**
+   * Stage C guarded-live execution path with hard caps and no-naked enforcement.
+   * @param {object} request
+   * @param {string} request.intentId
+   * @param {Record<string, string | number | boolean | undefined>} request.quoteParams
+   * @param {Record<string, unknown>} request.swapPayload
+   * @param {object} request.riskContext
+   * @param {number} request.riskContext.estimatedNotionalUsd
+   * @param {number} request.riskContext.currentNetExposureUsd
+   * @param {number} request.riskContext.projectedNetExposureUsd
+   * @param {number} [request.riskContext.hedgedExposureUsd]
+   * @param {boolean} [request.riskContext.reduceOnly]
+   * @param {object} [options]
+   * @param {boolean} [options.live]
+   * @param {string} [options.approvalId]
+   * @param {number} [options.nowMs]
+   */
+  async executeGuardedLiveSwap(request, options = {}) {
+    const nowMs = Number.isFinite(options.nowMs) ? Number(options.nowMs) : Date.now();
+    const mode = this.guardrailConfig.mode;
+    const runLive = options.live === true && mode === "guarded_live";
+    const assessment = this.assessGuardedLiveRisk(request, { nowMs });
+    const artifact = {
+      artifactId: `dflow-guarded-${assessment.intentId}-${nowMs}`,
+      mode,
+      liveRequested: options.live === true,
+      liveExecuted: false,
+      createdAtMs: nowMs,
+      assessment,
+      approval: null,
+      quoteIntegrity: null,
+      submission: null,
+    };
+
+    if (!assessment.allowed) {
+      this.#recordAudit("guarded_rejected", artifact);
+      return artifact;
+    }
+
+    if (!runLive) {
+      this.#recordAudit("guarded_dry_run", artifact);
+      return artifact;
+    }
+
+    const approval = this.#consumeValidApproval({
+      approvalId: options.approvalId,
+      intentId: assessment.intentId,
+      estimatedNotionalUsd: assessment.risk.estimatedNotionalUsd,
+      nowMs,
+    });
+    artifact.approval = approval;
+
+    const quoteIntegrity = await this.getQuoteIntegrity(request.quoteParams ?? {}, { nowMs });
+    artifact.quoteIntegrity = quoteIntegrity;
+    if (!quoteIntegrity.ok) {
+      artifact.assessment.allowed = false;
+      artifact.assessment.violations.push("quote integrity validation failed before live submission");
+      this.#recordAudit("guarded_rejected_quote_integrity", artifact);
+      return artifact;
+    }
+
+    const submission = await this.postSwapIdempotent(request.swapPayload ?? {}, {
+      idempotencyKey: request.swapPayload?.idempotencyKey ?? assessment.intentId,
+    });
+    artifact.liveExecuted = true;
+    artifact.submission = submission;
+    this.#incrementDailyNotionalLedger(assessment.risk.estimatedNotionalUsd, nowMs);
+    this.#recordAudit("guarded_live_executed", artifact);
+    return artifact;
+  }
+
+  /**
+   * @param {object} request
+   * @param {object} [options]
+   * @param {number} [options.nowMs]
+   */
+  assessGuardedLiveRisk(request, options = {}) {
+    const nowMs = Number.isFinite(options.nowMs) ? Number(options.nowMs) : Date.now();
+    const intentId = this.#asNonEmptyString(request?.intentId) ?? "unknown-intent";
+    const estimatedNotionalUsd = this.#asFiniteNumber(request?.riskContext?.estimatedNotionalUsd);
+    const currentNetExposureUsd = this.#asFiniteNumber(request?.riskContext?.currentNetExposureUsd);
+    const projectedNetExposureUsd = this.#asFiniteNumber(request?.riskContext?.projectedNetExposureUsd);
+    const hedgedExposureUsd = this.#asFiniteNumber(request?.riskContext?.hedgedExposureUsd) ?? 0;
+    const reduceOnly = request?.riskContext?.reduceOnly === true;
+    const swapSlippageBps = this.#asFiniteNumber(request?.swapPayload?.slippageBps);
+    const violations = [];
+
+    if (!this.guardrailConfig.enabled) {
+      violations.push("guarded-live path disabled by configuration");
+    }
+    if (estimatedNotionalUsd === null) {
+      violations.push("missing riskContext.estimatedNotionalUsd");
+    }
+    if (estimatedNotionalUsd !== null && estimatedNotionalUsd > this.guardrailConfig.maxNotionalUsd) {
+      violations.push(
+        `notional cap breach (${estimatedNotionalUsd} > ${this.guardrailConfig.maxNotionalUsd} USD per trade)`,
+      );
+    }
+
+    const dayKey = this.#toUtcDayKey(nowMs);
+    const dailyUsed = this.dailyNotionalLedger.get(dayKey) ?? 0;
+    if (estimatedNotionalUsd !== null && dailyUsed + estimatedNotionalUsd > this.guardrailConfig.maxDailyNotionalUsd) {
+      violations.push(
+        `daily notional cap breach (${dailyUsed + estimatedNotionalUsd} > ${this.guardrailConfig.maxDailyNotionalUsd} USD)`,
+      );
+    }
+
+    if (swapSlippageBps !== null && swapSlippageBps > this.guardrailConfig.maxSlippageBps) {
+      violations.push(`slippage cap breach (${swapSlippageBps}bps > ${this.guardrailConfig.maxSlippageBps}bps)`);
+    }
+
+    if (this.guardrailConfig.enforceNoNakedExposure) {
+      const hasExposureInputs = currentNetExposureUsd !== null && projectedNetExposureUsd !== null;
+      if (!hasExposureInputs) {
+        violations.push("missing exposure fields for no-naked-exposure guard");
+      } else {
+        const currentAbs = Math.abs(currentNetExposureUsd);
+        const projectedAbs = Math.abs(projectedNetExposureUsd);
+        const reducesExposure = projectedAbs <= currentAbs;
+        const fullyHedged = hedgedExposureUsd >= projectedAbs;
+        if (!reduceOnly && !reducesExposure && !fullyHedged) {
+          violations.push("no-naked-exposure guard failed (position increases without sufficient hedge)");
+        }
+      }
+    }
+
+    return {
+      intentId,
+      evaluatedAtMs: nowMs,
+      allowed: violations.length === 0,
+      violations,
+      risk: {
+        estimatedNotionalUsd,
+        currentNetExposureUsd,
+        projectedNetExposureUsd,
+        hedgedExposureUsd,
+        reduceOnly,
+        swapSlippageBps,
+        dailyUsedNotionalUsd: dailyUsed,
+        dailyRemainingNotionalUsd: Math.max(this.guardrailConfig.maxDailyNotionalUsd - dailyUsed, 0),
+      },
+      caps: {
+        maxNotionalUsd: this.guardrailConfig.maxNotionalUsd,
+        maxDailyNotionalUsd: this.guardrailConfig.maxDailyNotionalUsd,
+        maxSlippageBps: this.guardrailConfig.maxSlippageBps,
+      },
+      mode: this.guardrailConfig.mode,
+    };
+  }
+
+  listGuardedExecutionAuditTrail() {
+    return [...this.executionAuditTrail];
+  }
+
+  /**
    * @param {string} marketAddress
    */
   async getMarketMetadata(marketAddress) {
     return this.#request("GET", this.metadataBaseUrl, `/markets/${marketAddress}`);
+  }
+
+  /**
+   * Fetch /order-status and return deterministic integrity evaluation output.
+   * @param {Record<string, string | number | boolean | undefined>} params
+   * @param {object} [options]
+   * @param {number} [options.nowMs]
+   * @param {number} [options.maxAgeMs]
+   * @param {boolean} [options.throwOnError]
+   */
+  async getOrderStatusIntegrity(params, options = {}) {
+    const statusResponse = await this.getOrderStatus(params);
+    return this.validateOrderStatusIntegrity(statusResponse, options);
+  }
+
+  /**
+   * Validate /order-status response freshness, state parsing, and canonical identifiers.
+   * @param {unknown} statusResponse
+   * @param {object} [options]
+   * @param {number} [options.nowMs]
+   * @param {number} [options.maxAgeMs]
+   * @param {boolean} [options.throwOnError]
+   */
+  validateOrderStatusIntegrity(statusResponse, options = {}) {
+    const evaluated = this.#evaluateIntegrity(statusResponse, {
+      responseType: "order-status",
+      nowMs: options.nowMs,
+      maxAgeMs: options.maxAgeMs,
+      defaultMaxAgeMs: DEFAULT_ORDER_STATUS_FRESHNESS_MAX_AGE_MS,
+    });
+    if (options.throwOnError && !evaluated.ok) {
+      throw new Error(`DFlow order-status integrity validation failed: ${evaluated.errors.join("; ")}`);
+    }
+    return evaluated;
   }
 
   /**
@@ -492,5 +771,220 @@ export class DFlowAdapter {
 
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+  }
+
+  /**
+   * @param {unknown} response
+   * @param {object} options
+   * @param {"quote" | "order-status"} options.responseType
+   * @param {number | undefined} options.nowMs
+   * @param {number | undefined} options.maxAgeMs
+   * @param {number} options.defaultMaxAgeMs
+   */
+  #evaluateIntegrity(response, options) {
+    const normalized = response && typeof response === "object" ? response : {};
+    const nowMs = Number.isFinite(options.nowMs) ? Number(options.nowMs) : Date.now();
+    const maxAgeMs = Number.isFinite(options.maxAgeMs) ? Number(options.maxAgeMs) : options.defaultMaxAgeMs;
+    const errors = [];
+    const warnings = [];
+
+    const canonicalIds = this.#extractCanonicalIds(normalized);
+    if (!canonicalIds.primaryId) {
+      errors.push("missing canonical primary identifier");
+    }
+
+    const sourceTimestampMs = this.#resolveResponseTimestampMs(normalized);
+    let freshnessAgeMs = null;
+    let isFresh = null;
+    if (sourceTimestampMs === null) {
+      warnings.push("missing timestamp for freshness verification");
+    } else {
+      freshnessAgeMs = nowMs - sourceTimestampMs;
+      isFresh = freshnessAgeMs <= maxAgeMs;
+      if (!isFresh) {
+        errors.push(`${options.responseType} response is stale (${freshnessAgeMs}ms old > ${maxAgeMs}ms)`);
+      }
+    }
+
+    const parsedStatus = this.#normalizeOrderStatusState(normalized);
+    if (options.responseType === "order-status" && !parsedStatus) {
+      errors.push("missing parseable order status state");
+    }
+
+    return {
+      ok: errors.length === 0,
+      responseType: options.responseType,
+      parsed: {
+        status: parsedStatus,
+        timestampMs: sourceTimestampMs,
+      },
+      canonicalIds,
+      freshness: {
+        nowMs,
+        maxAgeMs,
+        timestampMs: sourceTimestampMs,
+        ageMs: freshnessAgeMs,
+        isFresh,
+      },
+      errors,
+      warnings,
+      response: normalized,
+    };
+  }
+
+  /**
+   * @param {Record<string, unknown>} response
+   */
+  #extractCanonicalIds(response) {
+    const quoteId = this.#asNonEmptyString(response.quoteId) ?? this.#asNonEmptyString(response.quote_id);
+    const orderId = this.#asNonEmptyString(response.orderId) ?? this.#asNonEmptyString(response.order_id);
+    const intentId = this.#asNonEmptyString(response.intentId) ?? this.#asNonEmptyString(response.intent_id);
+    const clientOrderId =
+      this.#asNonEmptyString(response.clientOrderId) ?? this.#asNonEmptyString(response.client_order_id);
+    const requestId = this.#asNonEmptyString(response.requestId) ?? this.#asNonEmptyString(response.request_id);
+    const fallbackId = this.#asNonEmptyString(response.id);
+
+    return {
+      primaryId: quoteId ?? orderId ?? intentId ?? clientOrderId ?? requestId ?? fallbackId ?? null,
+      quoteId: quoteId ?? null,
+      orderId: orderId ?? null,
+      intentId: intentId ?? null,
+      clientOrderId: clientOrderId ?? null,
+      requestId: requestId ?? null,
+      id: fallbackId ?? null,
+    };
+  }
+
+  /**
+   * @param {Record<string, unknown>} response
+   */
+  #resolveResponseTimestampMs(response) {
+    const timestampCandidates = [
+      response.timestampMs,
+      response.updatedAtMs,
+      response.createdAtMs,
+      response.timestamp,
+      response.updatedAt,
+      response.createdAt,
+      response.ts,
+      response.time,
+    ];
+
+    for (const candidate of timestampCandidates) {
+      const parsed = this.#parseTimestampMs(candidate);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * @param {unknown} value
+   */
+  #parseTimestampMs(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value >= 1_000_000_000_000 ? value : value * 1000;
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.length === 0) {
+        return null;
+      }
+
+      const asNumber = Number(trimmed);
+      if (Number.isFinite(asNumber)) {
+        return asNumber >= 1_000_000_000_000 ? asNumber : asNumber * 1000;
+      }
+
+      const asDateMs = Date.parse(trimmed);
+      if (Number.isFinite(asDateMs)) {
+        return asDateMs;
+      }
+    }
+
+    return null;
+  }
+
+  #createGuardrailConfig(guardrails) {
+    const mode = guardrails?.mode === "guarded_live" ? "guarded_live" : DEFAULT_GUARDED_MODE;
+    return {
+      enabled: guardrails?.enabled !== false,
+      mode,
+      maxNotionalUsd: this.#asFiniteNumber(guardrails?.maxNotionalUsd) ?? DEFAULT_MAX_NOTIONAL_USD,
+      maxDailyNotionalUsd:
+        this.#asFiniteNumber(guardrails?.maxDailyNotionalUsd) ?? DEFAULT_MAX_DAILY_NOTIONAL_USD,
+      maxSlippageBps: this.#asFiniteNumber(guardrails?.maxSlippageBps) ?? DEFAULT_MAX_SLIPPAGE_BPS,
+      approvalTtlMs: this.#asFiniteNumber(guardrails?.approvalTtlMs) ?? DEFAULT_APPROVAL_TTL_MS,
+      enforceNoNakedExposure: guardrails?.enforceNoNakedExposure !== false,
+    };
+  }
+
+  #consumeValidApproval({ approvalId, intentId, estimatedNotionalUsd, nowMs }) {
+    const normalizedApprovalId = this.#asNonEmptyString(approvalId);
+    if (!normalizedApprovalId) {
+      throw new Error("guarded-live live execution requires approvalId");
+    }
+
+    const approval = this.approvalStore.get(normalizedApprovalId);
+    if (!approval) {
+      throw new Error(`guarded-live approval not found: ${normalizedApprovalId}`);
+    }
+    if (approval.used) {
+      throw new Error(`guarded-live approval already consumed: ${normalizedApprovalId}`);
+    }
+    if (approval.intentId !== intentId) {
+      throw new Error(`guarded-live approval intent mismatch (${approval.intentId} != ${intentId})`);
+    }
+    if (approval.expiresAtMs < nowMs) {
+      throw new Error(`guarded-live approval expired at ${approval.expiresAtMs}`);
+    }
+    if (estimatedNotionalUsd !== null && estimatedNotionalUsd > approval.estimatedNotionalUsd) {
+      throw new Error(
+        `guarded-live notional exceeds approval (${estimatedNotionalUsd} > ${approval.estimatedNotionalUsd})`,
+      );
+    }
+
+    const consumed = {
+      ...approval,
+      used: true,
+      usedAtMs: nowMs,
+    };
+    this.approvalStore.set(normalizedApprovalId, consumed);
+    return consumed;
+  }
+
+  #incrementDailyNotionalLedger(estimatedNotionalUsd, nowMs) {
+    if (estimatedNotionalUsd === null) {
+      return;
+    }
+    const dayKey = this.#toUtcDayKey(nowMs);
+    const current = this.dailyNotionalLedger.get(dayKey) ?? 0;
+    this.dailyNotionalLedger.set(dayKey, current + estimatedNotionalUsd);
+  }
+
+  #toUtcDayKey(nowMs) {
+    return new Date(nowMs).toISOString().slice(0, 10);
+  }
+
+  #recordAudit(type, payload) {
+    this.executionAuditTrail.push({
+      type,
+      emittedAtMs: Date.now(),
+      payload,
+    });
+  }
+
+  #asFiniteNumber(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value.trim());
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
   }
 }

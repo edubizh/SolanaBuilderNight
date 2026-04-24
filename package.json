@@ -8,8 +8,12 @@
     "canary:dflow:live": "node scripts/live_dflow_canary.mjs --execute-live",
     "autobot:profit:dry": "node scripts/autonomous_profit_loop.mjs --dry-run",
     "autobot:profit:dry:once": "node scripts/autonomous_profit_loop.mjs --dry-run --once",
-    "autobot:profit:live": "node scripts/autonomous_profit_loop.mjs --execute-live",
-    "autobot:profit:live:once": "node scripts/autonomous_profit_loop.mjs --execute-live --once"
+    "autobot:profit:live": "node scripts/autonomous_profit_loop.mjs --execute-live",  
+    "autobot:profit:live:once": "node scripts/autonomous_profit_loop.mjs --execute-live --once",
+    "autobot:pnl": "node scripts/autobot_pnl_report.mjs",
+    "autobot:pnl:realized": "node scripts/autobot_pnl_report.mjs --realized",
+    "prediction:scan:once": "node scripts/prediction_market_scanner.mjs --once",
+    "prediction:scan": "node scripts/prediction_market_scanner.mjs --loop"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",

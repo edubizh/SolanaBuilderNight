@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { predictionVenueSchema } from "./prediction-schema.js";
 
 export const executionStateSchema = z.enum([
   "detected",
@@ -16,7 +17,7 @@ export const executionStateSchema = z.enum([
 export const executionAttemptSchema = z.object({
   intent_id: z.uuid(),
   attempt_id: z.uuid(),
-  venue: z.enum(["dflow", "pnp"]),
+  venue: predictionVenueSchema,
   operation: z.string().min(1),
   state: executionStateSchema,
   signature: z.string().min(1).optional(),

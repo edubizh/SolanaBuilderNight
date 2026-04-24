@@ -237,3 +237,61 @@ test("DFlowAdapter persists terminal lifecycle state by intent and order identif
   assert.equal(byIntent.finalState, "completed");
   assert.equal(byOrder.finalResponse.orderId, "ord-77");
 });
+
+test("DFlowAdapter quote integrity validates freshness and canonical ids deterministically", async () => {
+  const adapter = new DFlowAdapter({
+    tradingBaseUrl: "https://example.dflow",
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          quote_id: "quote-legacy-1",
+          timestamp: "2026-04-24T20:20:00.000Z",
+          bestPrice: "1.23",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  const report = await adapter.getQuoteIntegrity(
+    { market: "market-1", side: "buy" },
+    { nowMs: Date.parse("2026-04-24T20:20:10.000Z"), maxAgeMs: 15_000 },
+  );
+
+  assert.equal(report.ok, true);
+  assert.equal(report.canonicalIds.primaryId, "quote-legacy-1");
+  assert.equal(report.freshness.isFresh, true);
+  assert.equal(report.parsed.timestampMs, Date.parse("2026-04-24T20:20:00.000Z"));
+  assert.deepEqual(report.errors, []);
+});
+
+test("DFlowAdapter quote integrity returns stale validation error", () => {
+  const adapter = new DFlowAdapter({ fetchImpl: async () => new Response("{}") });
+  const report = adapter.validateQuoteIntegrity(
+    {
+      quoteId: "quote-stale-1",
+      timestampMs: 1_000,
+    },
+    {
+      nowMs: 2_000_000,
+      maxAgeMs: 10_000,
+    },
+  );
+
+  assert.equal(report.ok, false);
+  assert.equal(report.canonicalIds.primaryId, "quote-stale-1");
+  assert.equal(report.freshness.isFresh, false);
+  assert.match(report.errors[0], /stale/);
+});
+
+test("DFlowAdapter order-status integrity fails when state missing", () => {
+  const adapter = new DFlowAdapter({ fetchImpl: async () => new Response("{}") });
+  const report = adapter.validateOrderStatusIntegrity({
+    orderId: "ord-missing-state",
+    updatedAtMs: 100_000,
+  });
+
+  assert.equal(report.ok, false);
+  assert.equal(report.canonicalIds.primaryId, "ord-missing-state");
+  assert.equal(report.parsed.status, null);
+  assert.ok(report.errors.includes("missing parseable order status state"));
+});

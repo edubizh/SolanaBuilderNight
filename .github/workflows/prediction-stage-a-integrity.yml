@@ -1,0 +1,39 @@
+name: Prediction Stage A Integrity
+
+on:
+  pull_request:
+    paths:
+      - "infra/observability/**"
+      - "infra/ci/validate-prediction-stage-a.sh"
+      - "tests/smoke/prediction-stage-a-integrity.test.mjs"
+      - "docs/runbooks/prediction-stage-a-observability.md"
+      - ".github/workflows/prediction-stage-a-integrity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-stage-a-integrity:
+    name: Validate Stage A Ingestion + Quote Integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run Stage A integrity validation
+        run: bash infra/ci/validate-prediction-stage-a.sh
+
+      - name: Upload Stage A audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prediction-stage-a-integrity-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: .artifacts/prediction-stage-a/**

@@ -1,7 +1,20 @@
+import {
+  assessPredictionQuoteIntegrity,
+  buildPredictionCanonicalMapping
+} from "./prediction-canonicalization.ts";
+
 export interface ReplayCoinGeckoTick {
   source: "coingecko";
+  venue: "dflow" | "gemini" | "pnp";
   tokenAddress: string;
   symbol: string;
+  venueEventId: string;
+  venueMarketId: string;
+  venueOutcomeId: string;
+  eventTitle: string;
+  eventStartAt: string;
+  marketQuestion: string;
+  outcomeLabel: string;
   priceUsd: string;
   decimals: number;
   observedAt: string;
@@ -10,9 +23,19 @@ export interface ReplayCoinGeckoTick {
 
 export interface ReplayPythTick {
   source: "pyth-hermes";
+  venue: "dflow" | "gemini" | "pnp";
   feedId: string;
   symbol: string;
+  venueEventId: string;
+  venueMarketId: string;
+  venueOutcomeId: string;
+  eventTitle: string;
+  eventStartAt: string;
+  marketQuestion: string;
+  outcomeLabel: string;
   price: string;
+  bidPrice: string;
+  askPrice: string;
   confidence: string;
   publishTimeSec: number;
   observedAt: string;
@@ -21,7 +44,15 @@ export interface ReplayPythTick {
 
 export interface ReplayHeliusTick {
   source: "helius";
+  venue: "dflow" | "gemini" | "pnp";
   symbol: string;
+  venueEventId: string;
+  venueMarketId: string;
+  venueOutcomeId: string;
+  eventTitle: string;
+  eventStartAt: string;
+  marketQuestion: string;
+  outcomeLabel: string;
   observedAt: string;
   streamMessage: string;
   externalEventId: string;
@@ -36,6 +67,7 @@ export interface IngestionReplayDataset {
 
 export interface ReplayNormalizedFrame {
   source: "coingecko" | "pyth-hermes" | "helius";
+  venue: "dflow" | "gemini" | "pnp";
   symbol: string;
   eventId: string;
   observedAtMs: number;
@@ -60,16 +92,41 @@ export function replayDatasetToNormalizedFrames(dataset: IngestionReplayDataset)
 function normalizeCoinGeckoFrame(frame: ReplayCoinGeckoTick): ReplayNormalizedFrame {
   const observedAtMs = normalizeTimestampMs(frame.observedAt);
   const eventId = `${frame.source}:${frame.externalEventId}`;
+  const canonicalMapping = buildPredictionCanonicalMapping({
+    venue: frame.venue,
+    venueEventId: frame.venueEventId,
+    venueMarketId: frame.venueMarketId,
+    venueOutcomeId: frame.venueOutcomeId,
+    eventTitle: frame.eventTitle,
+    marketQuestion: frame.marketQuestion,
+    outcomeLabel: frame.outcomeLabel,
+    eventState: "scheduled",
+    marketType: "binary",
+    outcomeSide: "yes",
+    eventStartMs: normalizeTimestampMs(frame.eventStartAt)
+  });
+  const quote = Number(frame.priceUsd) / 200;
+  const quoteQuality = assessPredictionQuoteIntegrity({
+    observedAtMs,
+    nowMs: observedAtMs + 450,
+    bidPrice: quote - 0.01,
+    askPrice: quote + 0.01,
+    confidenceRatio: 0.01,
+    depthScore: 0.7
+  });
 
   return {
     source: frame.source,
+    venue: frame.venue,
     symbol: frame.symbol,
     eventId,
     observedAtMs,
     traceId: eventId,
     payload: {
       tokenAddress: frame.tokenAddress,
-      price: normalizeDecimal(toAtomicUnits(frame.priceUsd, frame.decimals), frame.decimals)
+      price: normalizeDecimal(toAtomicUnits(frame.priceUsd, frame.decimals), frame.decimals),
+      canonicalMapping,
+      quoteQuality
     }
   };
 }
@@ -77,9 +134,31 @@ function normalizeCoinGeckoFrame(frame: ReplayCoinGeckoTick): ReplayNormalizedFr
 function normalizePythFrame(frame: ReplayPythTick): ReplayNormalizedFrame {
   const observedAtMs = normalizeTimestampMs(frame.publishTimeSec);
   const eventId = `${frame.source}:${frame.externalEventId}`;
+  const canonicalMapping = buildPredictionCanonicalMapping({
+    venue: frame.venue,
+    venueEventId: frame.venueEventId,
+    venueMarketId: frame.venueMarketId,
+    venueOutcomeId: frame.venueOutcomeId,
+    eventTitle: frame.eventTitle,
+    marketQuestion: frame.marketQuestion,
+    outcomeLabel: frame.outcomeLabel,
+    eventState: "live",
+    marketType: "binary",
+    outcomeSide: "yes",
+    eventStartMs: normalizeTimestampMs(frame.eventStartAt)
+  });
+  const quoteQuality = assessPredictionQuoteIntegrity({
+    observedAtMs,
+    nowMs: observedAtMs + 2_000,
+    bidPrice: Number(frame.bidPrice),
+    askPrice: Number(frame.askPrice),
+    confidenceRatio: Number(frame.confidence) / Math.max(1, Math.abs(Number(frame.price))),
+    depthScore: 0.85
+  });
 
   return {
     source: frame.source,
+    venue: frame.venue,
     symbol: frame.symbol,
     eventId,
     observedAtMs,
@@ -88,7 +167,9 @@ function normalizePythFrame(frame: ReplayPythTick): ReplayNormalizedFrame {
       feedId: frame.feedId,
       confidence: frame.confidence,
       publishTimeSec: frame.publishTimeSec,
-      price: normalizeDecimal(BigInt(frame.price), 2)
+      price: normalizeDecimal(BigInt(frame.price), 2),
+      canonicalMapping,
+      quoteQuality
     }
   };
 }
@@ -100,17 +181,43 @@ function normalizeHeliusFrame(frame: ReplayHeliusTick): ReplayNormalizedFrame {
   }
 
   const eventId = `helius:${parsed.signature}|${parsed.slot}`;
+  const observedAtMs = normalizeTimestampMs(parsed.timestampMs);
+  const canonicalMapping = buildPredictionCanonicalMapping({
+    venue: frame.venue,
+    venueEventId: frame.venueEventId,
+    venueMarketId: frame.venueMarketId,
+    venueOutcomeId: frame.venueOutcomeId,
+    eventTitle: frame.eventTitle,
+    marketQuestion: frame.marketQuestion,
+    outcomeLabel: frame.outcomeLabel,
+    eventState: "live",
+    marketType: "binary",
+    outcomeSide: "yes",
+    eventStartMs: normalizeTimestampMs(frame.eventStartAt)
+  });
+  const quoteQuality = assessPredictionQuoteIntegrity({
+    observedAtMs,
+    nowMs: observedAtMs + 1_000,
+    bidPrice: 0.58,
+    askPrice: 0.6,
+    confidenceRatio: 0.02,
+    depthScore: 0.5
+  });
+
   return {
     source: "helius",
+    venue: frame.venue,
     symbol: frame.symbol,
     eventId,
-    observedAtMs: normalizeTimestampMs(parsed.timestampMs),
+    observedAtMs,
     traceId: frame.externalEventId,
     payload: {
       signature: parsed.signature,
       slot: parsed.slot,
       accountKeys: parsed.accountKeys,
-      instructionCount: parsed.instructionCount
+      instructionCount: parsed.instructionCount,
+      canonicalMapping,
+      quoteQuality
     }
   };
 }

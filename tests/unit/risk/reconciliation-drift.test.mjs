@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildDeterministicReconciliationLedger,
   evaluateReconciliationDrift
 } from "../../../services/position-settlement-service/reconciliation/src/index.js";
 
@@ -47,4 +48,35 @@ test("reconciliation drift resets state once reconciliation matches", () => {
   assert.equal(recovered.unresolvedDurationMs, 0);
   assert.equal(recovered.haltPolicy.shouldHalt, false);
   assert.deepEqual(recovered.haltPolicy.reasons, []);
+});
+
+test("deterministic reconciliation ledger sorts and sequences accounting entries", () => {
+  const ledger = buildDeterministicReconciliationLedger([
+    {
+      intentId: "intent-z",
+      traceId: "trace-2",
+      canonicalMarketId: "market-b",
+      matched: false,
+      quantityDriftPct: 0.02,
+      valueDriftUsd: 12,
+      mismatches: ["value_drift_exceeded", "quantity_drift_exceeded"],
+      recordedAtMs: 300
+    },
+    {
+      intentId: "intent-a",
+      traceId: "trace-1",
+      canonicalMarketId: "market-a",
+      matched: true,
+      quantityDriftPct: 0,
+      valueDriftUsd: 0,
+      mismatches: [],
+      recordedAtMs: 100
+    }
+  ]);
+
+  assert.equal(ledger.length, 2);
+  assert.equal(ledger[0].sequence, 1);
+  assert.equal(ledger[1].sequence, 2);
+  assert.equal(ledger[0].intentId, "intent-a");
+  assert.equal(ledger[1].intentId, "intent-z");
 });

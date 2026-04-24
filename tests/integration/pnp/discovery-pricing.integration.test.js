@@ -23,7 +23,7 @@ test("PNP discovery and pricing flow serializes requests correctly", async () =>
       if (parsedUrl.pathname === "/quote") {
         assert.equal(parsedUrl.searchParams.get("marketId"), "pnp-sol-usdc-v2");
         assert.equal(parsedUrl.searchParams.get("size"), "3");
-        return new Response(JSON.stringify({ price: 151.22 }), {
+        return new Response(JSON.stringify({ price: 151.22, quotedAtMs: 1713700000000 }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -33,15 +33,48 @@ test("PNP discovery and pricing flow serializes requests correctly", async () =>
     },
   });
 
-  const adapter = new PnpExecutionAdapter({ client });
+  const adapter = new PnpExecutionAdapter({
+    now: () => 1713700000000,
+    client,
+  });
   const markets = await adapter.discoverMarkets();
   const quote = await adapter.getPrice({ marketId: markets[0].marketId, size: 3 });
 
   assert.equal(markets.length, 1);
   assert.equal(quote.price, 151.22);
+  assert.equal(quote.sourceTimestampMs, 1713700000000);
   assert.deepEqual(
     calls.map((entry) => new URL(entry.url).pathname),
     ["/markets", "/quote"],
+  );
+});
+
+test("PNP pricing rejects stale quotes from venue", async () => {
+  const client = new PnpClient({
+    now: () => 1713700000000,
+    fetchImpl: async (url) => {
+      const parsedUrl = new URL(url);
+      if (parsedUrl.pathname === "/quote") {
+        return new Response(JSON.stringify({ price: 99.5, quotedAtMs: 1713699990000 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  const adapter = new PnpExecutionAdapter({
+    now: () => 1713700000000,
+    maxQuoteAgeMs: 5_000,
+    client,
+  });
+
+  await assert.rejects(
+    () => adapter.getPrice({ marketId: "pnp-sol-usdc-v2", size: 3 }),
+    /quote is stale/,
   );
 });
 

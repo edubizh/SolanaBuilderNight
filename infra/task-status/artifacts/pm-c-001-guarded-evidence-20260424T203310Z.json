@@ -1,0 +1,11 @@
+{
+  "taskId": "PM-C-001",
+  "generatedAtUtc": "20260424T203310Z",
+  "checks": {
+    "guardedModeOnly": true,
+    "riskCapsConfigured": true,
+    "noNakedExposureEnforced": true,
+    "approvalTrailRequired": true
+  },
+  "notes": "Template evidence artifact. Populate with adapter execution audit output from runtime environment."
+}

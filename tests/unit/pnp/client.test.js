@@ -48,8 +48,51 @@ test("getQuote validates size and returns normalized quote", async () => {
     marketId: "pnp-sol-usdc-v2",
     price: 23.456,
     size: 5,
+    sourceTimestampMs: 1713700000000,
     fetchedAtMs: 1713700000000,
   });
+});
+
+test("getQuote rejects mismatched market/size and invalid timestamp", async () => {
+  const now = 1713700000000;
+  const marketMismatchClient = new PnpClient({
+    now: () => now,
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ marketId: "other-market", price: 10 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  await assert.rejects(
+    () => marketMismatchClient.getQuote({ marketId: "pnp-sol-usdc-v2", size: 2 }),
+    /marketId mismatch/,
+  );
+
+  const sizeMismatchClient = new PnpClient({
+    now: () => now,
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ marketId: "pnp-sol-usdc-v2", price: 10, size: 3 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  await assert.rejects(
+    () => sizeMismatchClient.getQuote({ marketId: "pnp-sol-usdc-v2", size: 2 }),
+    /size mismatch/,
+  );
+
+  const invalidTimestampClient = new PnpClient({
+    now: () => now,
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ marketId: "pnp-sol-usdc-v2", price: 10, quotedAtMs: "bad" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  await assert.rejects(
+    () => invalidTimestampClient.getQuote({ marketId: "pnp-sol-usdc-v2", size: 2 }),
+    /invalid timestamp/,
+  );
 });
 
 test("submitOrder validates buy/sell request and returns accepted payload", async () => {

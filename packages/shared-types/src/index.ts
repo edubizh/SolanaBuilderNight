@@ -7,6 +7,59 @@ export type EventName =
   | "position_reconciled"
   | "circuit_breaker_triggered";
 
+export type PredictionVenue = "dflow" | "gemini" | "pnp";
+export type PredictionDeterministicIdVersion = "v1";
+export type CanonicalPredictionEventId = `pm_evt_v1_${string}`;
+export type CanonicalPredictionMarketId = `pm_mkt_v1_${string}`;
+export type CanonicalPredictionOutcomeId = `pm_out_v1_${string}`;
+export type PredictionEventState =
+  | "scheduled"
+  | "live"
+  | "closed"
+  | "resolved"
+  | "cancelled";
+export type PredictionMarketType = "binary" | "multi_outcome" | "scalar";
+export type PredictionOutcomeSide =
+  | "yes"
+  | "no"
+  | "long"
+  | "short"
+  | "over"
+  | "under"
+  | "custom";
+export type QuoteFreshnessTier = "realtime" | "fresh" | "stale" | "expired";
+export type QuoteIntegrityStatus =
+  | "ok"
+  | "crossed_book"
+  | "outlier"
+  | "stale_rejected"
+  | "insufficient_depth"
+  | "venue_unavailable";
+export type QuoteConfidenceTier = "high" | "medium" | "low" | "unknown";
+
+export type PredictionQuoteQualityMetadata = {
+  freshness_tier: QuoteFreshnessTier;
+  integrity_status: QuoteIntegrityStatus;
+  confidence_tier: QuoteConfidenceTier;
+  spread_bps?: number;
+  depth_score?: number;
+  stale_by_ms?: number;
+};
+
+export type PredictionCanonicalMapping = {
+  id_version: PredictionDeterministicIdVersion;
+  venue: PredictionVenue;
+  venue_event_id: string;
+  venue_market_id: string;
+  venue_outcome_id?: string;
+  canonical_event_id: CanonicalPredictionEventId;
+  canonical_market_id: CanonicalPredictionMarketId;
+  canonical_outcome_id?: CanonicalPredictionOutcomeId;
+  event_state?: PredictionEventState;
+  market_type?: PredictionMarketType;
+  outcome_side?: PredictionOutcomeSide;
+};
+
 export type EventEnvelope = {
   event_id: string;
   intent_id?: string;
@@ -18,7 +71,7 @@ export type EventEnvelope = {
 };
 
 export type MarketSnapshot = {
-  venue: "dflow" | "pnp";
+  venue: PredictionVenue;
   market_id: string;
   base_symbol: string;
   quote_symbol: string;
@@ -27,6 +80,10 @@ export type MarketSnapshot = {
   mid_price: number;
   confidence_ratio?: number;
   updated_at_ms: number;
+  canonical_event_id?: CanonicalPredictionEventId;
+  canonical_market_id?: CanonicalPredictionMarketId;
+  outcome_side?: PredictionOutcomeSide;
+  quote_quality?: PredictionQuoteQualityMetadata;
 };
 
 export type StrategyMode = "conservative" | "balanced" | "aggressive";
@@ -48,7 +105,7 @@ export type OpportunityIntent = {
   created_at_ms: number;
 };
 
-export type ExecutionVenue = "dflow" | "pnp";
+export type ExecutionVenue = PredictionVenue;
 
 export type ExecutionState =
   | "detected"
@@ -99,7 +156,7 @@ export type CanonicalEvent =
   | (EventEnvelope & {
       event_name: "market_data_updated";
       payload: {
-        venue: string;
+        venue: PredictionVenue;
         market_symbol: string;
         quote_timestamp_ms: number;
         oracle_timestamp_ms?: number;
@@ -108,6 +165,10 @@ export type CanonicalEvent =
         mid_price?: number;
         confidence_ratio?: number;
         staleness_ms: number;
+        canonical_event_id?: CanonicalPredictionEventId;
+        canonical_market_id?: CanonicalPredictionMarketId;
+        outcome_side?: PredictionOutcomeSide;
+        quote_quality?: PredictionQuoteQualityMetadata;
       };
     })
   | (EventEnvelope & {

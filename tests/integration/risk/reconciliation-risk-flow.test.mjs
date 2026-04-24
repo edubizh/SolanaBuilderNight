@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { RiskEngine } from "../../../services/risk-engine/src/index.js";
 import {
+  buildDeterministicReconciliationLedger,
   evaluateReconciliation,
   evaluateReconciliationDrift
 } from "../../../services/position-settlement-service/reconciliation/src/index.js";
@@ -87,4 +88,72 @@ test("unresolved reconciliation drift timeout escalates into automatic halt", ()
   assert.equal(runtimeDecision.reason, "reconciliation_mismatch_threshold");
   assert.ok(runtimeDecision.reasons.includes("reconciliation_unresolved_drift_timeout"));
   assert.equal(runtimeDecision.killSwitch.engage, true);
+});
+
+test("paper arbitrage outputs produce deterministic accounting and reconciliation logs", () => {
+  const engine = new RiskEngine();
+  const paperRiskResult = engine.evaluatePaperArbitrageOutputs({
+    nowMs: 77_000,
+    currentState: {
+      aggregateOpenExposureUsd: 500,
+      projectedDailyPaperLossUsd: 0,
+      exposureByMarket: {},
+      exposureByVenue: {}
+    },
+    intents: [
+      {
+        intentId: "intent-2",
+        traceId: "trace-2",
+        canonicalMarketId: "market-b",
+        buyVenue: "dflow",
+        sellVenue: "gemini",
+        tradeNotionalUsd: 600,
+        expectedValueUsd: 15,
+        executionMode: "paper_only",
+        noNakedExposure: { required: true, passed: true }
+      },
+      {
+        intentId: "intent-1",
+        traceId: "trace-1",
+        canonicalMarketId: "market-a",
+        buyVenue: "dflow",
+        sellVenue: "gemini",
+        tradeNotionalUsd: 800,
+        expectedValueUsd: -30,
+        executionMode: "paper_only",
+        noNakedExposure: { required: true, passed: true }
+      }
+    ],
+    decisionLogs: []
+  });
+
+  const reconciliationLedger = buildDeterministicReconciliationLedger([
+    {
+      intentId: "intent-2",
+      traceId: "trace-2",
+      canonicalMarketId: "market-b",
+      matched: true,
+      quantityDriftPct: 0,
+      valueDriftUsd: 0,
+      mismatches: [],
+      recordedAtMs: 77_010
+    },
+    {
+      intentId: "intent-1",
+      traceId: "trace-1",
+      canonicalMarketId: "market-a",
+      matched: false,
+      quantityDriftPct: 0.015,
+      valueDriftUsd: 11,
+      mismatches: ["quantity_drift_exceeded", "value_drift_exceeded"],
+      recordedAtMs: 77_020
+    }
+  ]);
+
+  assert.equal(paperRiskResult.acceptedIntents.length, 2);
+  assert.equal(paperRiskResult.accountingLogs[0].intentId, "intent-1");
+  assert.equal(paperRiskResult.accountingLogs[1].intentId, "intent-2");
+  assert.equal(paperRiskResult.accountingLogs[0].sequence, 1);
+  assert.equal(reconciliationLedger[0].intentId, "intent-1");
+  assert.equal(reconciliationLedger[1].intentId, "intent-2");
 });
