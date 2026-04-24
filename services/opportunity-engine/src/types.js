@@ -101,4 +101,42 @@
  * @property {number} createdAtMs
  */
 
+/**
+ * @typedef {Object} PaperDecisionLog
+ * @property {string} traceId
+ * @property {string} canonicalMarketId
+ * @property {"accepted" | "rejected"} decision
+ * @property {string[]} reasons
+ * @property {number} createdAtMs
+ * @property {{ required: true, passed: boolean, reason: string }} noNakedExposure
+ * @property {number | null} expectedNetUsd
+ */
+
+/**
+ * @typedef {Object} ExpectedNetDistribution
+ * @property {number} count
+ * @property {number | null} min
+ * @property {number | null} max
+ * @property {number | null} avg
+ * @property {Record<string, number>} buckets
+ */
+
+/**
+ * @typedef {Object} OpportunityQualityTelemetry
+ * @property {{ accepted: number, skipped: number, total: number }} totals
+ * @property {Record<string, number>} acceptedByReason
+ * @property {Record<string, number>} skippedByReason
+ * @property {{ accepted: ExpectedNetDistribution, skipped: ExpectedNetDistribution }} expectedNetDistributions
+ */
+
+/**
+ * @typedef {Object} OperationalSnapshot
+ * @property {number} generatedAtMs
+ * @property {number} minSpreadToTrade
+ * @property {number} tradeNotionalUsd
+ * @property {"paper_only" | "live"} requestedExecutionMode
+ * @property {OpportunityQualityTelemetry} telemetry
+ * @property {PaperDecisionLog[]} decisions
+ */
+
 export {};

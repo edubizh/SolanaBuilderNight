@@ -1,0 +1,18 @@
+{
+  "task_id": "PM-O-003",
+  "as_of_utc": "2026-04-24T20:55:06.541Z",
+  "accepted_count": 0,
+  "skipped_count": 27,
+  "expected_net_usd_p50": -0.15,
+  "expected_net_usd_p90": 0.82,
+  "skip_reasons": [
+    {
+      "reason": "risk_rejected",
+      "count": 15
+    },
+    {
+      "reason": "insufficient_edge",
+      "count": 12
+    }
+  ]
+}

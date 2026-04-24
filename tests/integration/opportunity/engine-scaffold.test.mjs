@@ -2,10 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildOperationalSnapshot,
   calculateEdgeNet,
   filterEligibleCandidates,
   rankCandidates,
   runPaperArbitrageLoop,
+  serializeOperationalSnapshot,
 } from "../../../services/opportunity-engine/src/index.js";
 
 test("engine scaffold supports deterministic replay semantics", () => {
@@ -200,8 +202,22 @@ test("paper arbitrage loop generates deterministic decision logs and artifacts",
   assert.deepEqual(result.intents.map((intent) => intent.canonicalMarketId), ["pm_mkt_v1_b"]);
   assert.equal(result.intents[0].executionMode, "paper_only");
   assert.equal(result.intents[0].noNakedExposure.passed, true);
+  assert.equal(result.telemetry.totals.accepted, 1);
+  assert.equal(result.telemetry.totals.skipped, 1);
+  assert.equal(result.telemetry.acceptedByReason.spread_actionable_and_paper_safe, 1);
+  assert.equal(result.telemetry.skippedByReason.insufficient_integrity_valid_quotes, 1);
   assert.deepEqual(
     result.decisionLogs.map((log) => `${log.canonicalMarketId}:${log.decision}`),
     ["pm_mkt_v1_a:rejected", "pm_mkt_v1_b:accepted"],
   );
+
+  const snapshot = buildOperationalSnapshot(result, {
+    minSpreadToTrade: 0.03,
+    tradeNotionalUsd: 100,
+    nowMs: 777_111,
+  });
+  const serialized = serializeOperationalSnapshot(snapshot);
+  const parsed = JSON.parse(serialized);
+  assert.equal(parsed.generatedAtMs, 777_111);
+  assert.equal(parsed.telemetry.totals.total, 2);
 });

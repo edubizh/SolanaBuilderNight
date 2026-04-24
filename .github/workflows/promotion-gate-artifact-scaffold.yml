@@ -19,8 +19,11 @@ permissions:
 
 jobs:
   daily-artifacts:
-    name: Build PM-G-002 Daily Artifacts
+    name: Build PM-O-001 Hardened Daily Artifacts
     runs-on: ubuntu-latest
+    env:
+      DEFAULT_RETENTION_DAYS: "14"
+      DEFAULT_RETENTION_RUNS: "30"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,17 +58,64 @@ jobs:
           node -e "JSON.parse(require('node:fs').readFileSync('.artifacts/promotion-gate/evaluator.json', 'utf8'));"
           node -e "JSON.parse(require('node:fs').readFileSync('.artifacts/promotion-gate/context.json', 'utf8'));"
 
+      - name: Resolve retention controls
+        id: retention
+        env:
+          RETENTION_DAYS_VAR: ${{ vars.PROMOTION_GATE_DAILY_RETENTION_DAYS }}
+          RETENTION_RUNS_VAR: ${{ vars.PROMOTION_GATE_DAILY_RETENTION_RUNS }}
+        run: |
+          retention_days="${RETENTION_DAYS_VAR:-${DEFAULT_RETENTION_DAYS}}"
+          retention_runs="${RETENTION_RUNS_VAR:-${DEFAULT_RETENTION_RUNS}}"
+          if [[ ! "${retention_days}" =~ ^[0-9]+$ ]] || (( retention_days < 1 || retention_days > 90 )); then
+            echo "DIAGNOSTIC_CODE=invalid_retention_days"
+            echo "Invalid PROMOTION_GATE_DAILY_RETENTION_DAYS=${retention_days}; expected integer in [1,90]."
+            exit 1
+          fi
+          if [[ ! "${retention_runs}" =~ ^[0-9]+$ ]] || (( retention_runs < 1 || retention_runs > 365 )); then
+            echo "DIAGNOSTIC_CODE=invalid_retention_runs"
+            echo "Invalid PROMOTION_GATE_DAILY_RETENTION_RUNS=${retention_runs}; expected integer in [1,365]."
+            exit 1
+          fi
+          echo "retention_days=${retention_days}" >> "${GITHUB_OUTPUT}"
+          echo "retention_runs=${retention_runs}" >> "${GITHUB_OUTPUT}"
+
       - name: Build evaluator-wired daily artifacts
-        run: node infra/ci/build-promotion-gate-daily-artifacts.mjs .artifacts/promotion-gate/evaluator.json .artifacts/promotion-gate/context.json
+        env:
+          PROMOTION_GATE_DAILY_RETENTION_RUNS: ${{ steps.retention.outputs.retention_runs }}
+        run: |
+          node infra/ci/build-promotion-gate-daily-artifacts.mjs .artifacts/promotion-gate/evaluator.json .artifacts/promotion-gate/context.json 2>&1 | tee .artifacts/promotion-gate/build.log
 
       - name: Validate daily artifact naming and content
         run: node --test tests/smoke/promotion-gate-daily-artifact-pipeline.test.mjs
 
+      - name: Emit deterministic failure diagnostics
+        if: failure()
+        run: |
+          mkdir -p .artifacts/promotion-gate
+          {
+            echo "# Promotion Gate Daily Failure Diagnostics"
+            echo
+            echo "- workflow: ${GITHUB_WORKFLOW}"
+            echo "- job: ${GITHUB_JOB}"
+            echo "- run_id: ${GITHUB_RUN_ID}"
+            echo "- run_attempt: ${GITHUB_RUN_ATTEMPT}"
+            echo "- generated_at_utc: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            echo
+            echo "## Diagnostic Signals"
+            echo
+            if [[ -f .artifacts/promotion-gate/build.log ]]; then
+              grep -E "DIAGNOSTIC_CODE=|BLOCKER_REASON=" .artifacts/promotion-gate/build.log || echo "- none_found_in_build_log"
+            else
+              echo "- build_log_missing"
+            fi
+          } > .artifacts/promotion-gate/failure-diagnostics.md
+
       - name: Upload promotion gate daily artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: promotion-gate-daily-${{ github.run_id }}
-          retention-days: 14
+          retention-days: ${{ steps.retention.outputs.retention_days || env.DEFAULT_RETENTION_DAYS }}
           if-no-files-found: error
           path: |
             .artifacts/promotion-gate/**

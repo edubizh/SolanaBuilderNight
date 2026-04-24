@@ -72,3 +72,84 @@ test("GeminiPredictionAdapter can require auth surface for quote", async () => {
     /requires auth credentials/,
   );
 });
+
+test("GeminiPredictionAdapter fails closed when guarded-live submission errors", async () => {
+  const adapter = new GeminiPredictionAdapter({
+    executionMode: "guarded_live",
+    allowLiveExecution: true,
+    now: () => 1_710_000_000_000,
+    executeOrderHook: async () => {
+      throw new Error("provider unavailable");
+    },
+  });
+  const { approvalId } = adapter.createApproval({
+    intentId: "intent-1",
+    approvedBy: "operator",
+    approvedNotionalUsd: 50,
+    ttlMs: 120_000,
+  });
+
+  const result = await adapter.executeGuardedOrder({
+    intentId: "intent-1",
+    estimatedNotionalUsd: 25,
+    currentNetExposureUsd: 10,
+    projectedNetExposureUsd: 0,
+    hedgedExposureUsd: 0,
+    slippageBps: 10,
+    quote: { bid: 0.4, ask: 0.5 },
+    live: true,
+    approvalId,
+    swapPayload: { marketId: "mkt-1", side: "buy", quantity: "1" },
+  });
+
+  assert.equal(result.status, "rejected");
+  assert.equal(result.artifact.liveExecuted, false);
+  assert.equal(result.artifact.submission.executed, false);
+  assert.equal(result.artifact.submission.simulated, true);
+  assert.match(result.artifact.submission.error, /provider unavailable/);
+  assert.ok(result.artifact.assessment.violations.includes("LIVE_SUBMISSION_FAILED"));
+});
+
+test("GeminiPredictionAdapter forwards deterministic idempotency key on live order", async () => {
+  const headersByPath = [];
+  const adapter = new GeminiPredictionAdapter({
+    baseUrl: "https://example.gemini",
+    executionMode: "guarded_live",
+    allowLiveExecution: true,
+    requestRetries: 0,
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/v1/prediction/orders") {
+        headersByPath.push(init.headers ?? {});
+        return new Response(JSON.stringify({ providerOrderId: "ord-1", attempts: 1 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
+    },
+  });
+  const { approvalId } = adapter.createApproval({
+    intentId: "intent-2",
+    approvedBy: "operator",
+    approvedNotionalUsd: 50,
+    ttlMs: 120_000,
+  });
+
+  const result = await adapter.executeGuardedOrder({
+    intentId: "intent-2",
+    estimatedNotionalUsd: 20,
+    currentNetExposureUsd: 10,
+    projectedNetExposureUsd: 0,
+    hedgedExposureUsd: 0,
+    slippageBps: 5,
+    quote: { bid: 0.1, ask: 0.2 },
+    live: true,
+    approvalId,
+    swapPayload: { marketId: "mkt-2", side: "buy", quantity: "1" },
+  });
+
+  assert.equal(result.status, "executed");
+  assert.equal(headersByPath.length, 1);
+  assert.equal(headersByPath[0]["x-idempotency-key"], "gmn-intent-2");
+});

@@ -1,6 +1,6 @@
 {
-  "task_id": "PM-G-002",
-  "generated_at_utc": "2026-04-24T20:51:41.691Z",
+  "task_id": "PM-O-001",
+  "generated_at_utc": "2026-04-24T21:11:34.490Z",
   "as_of_utc": "2026-04-24T00:00:00.000Z",
   "evaluator_contract_version": "PM-G-001",
   "strict_wall_clock_policy": {
@@ -15,6 +15,10 @@
       "paper_days_completed": 7,
       "guarded_live_days_completed": 3
     }
+  },
+  "retention_policy": {
+    "mode": "deterministic_keep_latest_utc_stamps",
+    "retention_runs": 30
   },
   "evaluator": {
     "as_of_utc": "2026-04-24T00:00:00.000Z",

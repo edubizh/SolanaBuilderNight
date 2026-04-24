@@ -1,0 +1,11 @@
+{
+  "task_id": "PM-O-002",
+  "as_of_utc": "2026-04-24T20:55:06.541Z",
+  "critical_breach_total": 15,
+  "top_causes": [
+    {
+      "category": "critical_risk_breach_requirement",
+      "count": 15
+    }
+  ]
+}

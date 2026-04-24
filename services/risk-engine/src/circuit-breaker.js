@@ -7,6 +7,17 @@ export const DEFAULT_BREAKER_THRESHOLDS = Object.freeze({
   maxProviderDegradationMs: 30_000
 });
 
+const BREAKER_REASON_CATEGORY = Object.freeze({
+  manual_kill_switch_active: "operator_control",
+  critical_rule_breach: "policy_integrity",
+  consecutive_execution_failures: "execution_reliability",
+  critical_feed_staleness: "market_data_integrity",
+  slippage_outlier_breaches: "execution_quality",
+  reconciliation_mismatch_threshold: "reconciliation_integrity",
+  reconciliation_unresolved_drift_timeout: "reconciliation_integrity",
+  provider_degradation_window_breached: "provider_health"
+});
+
 function toFiniteNumber(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -20,6 +31,66 @@ function isTriggerActivated(metricValue, comparator, thresholdValue) {
     default:
       return false;
   }
+}
+
+function toSortedRollup(entries, keyName) {
+  return [...entries]
+    .sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      return String(a[keyName]).localeCompare(String(b[keyName]));
+    })
+    .map((entry, index) => ({
+      rank: index + 1,
+      ...entry
+    }));
+}
+
+function buildCriticalBreachClassifier(triggeredBreakers) {
+  const reasonCounts = new Map();
+  const categoryCounts = new Map();
+
+  for (const breaker of triggeredBreakers) {
+    const reason = String(breaker.reason ?? "unknown_reason");
+    const category = BREAKER_REASON_CATEGORY[reason] ?? "uncategorized";
+    reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+    categoryCounts.set(category, (categoryCounts.get(category) ?? 0) + 1);
+  }
+
+  const causeRollup = toSortedRollup(
+    [...reasonCounts.entries()].map(([reason, count]) => ({
+      reason,
+      category: BREAKER_REASON_CATEGORY[reason] ?? "uncategorized",
+      count
+    })),
+    "reason"
+  );
+  const categoryRollup = toSortedRollup(
+    [...categoryCounts.entries()].map(([category, count]) => ({ category, count })),
+    "category"
+  );
+
+  const topCause = causeRollup[0] ?? {
+    rank: 0,
+    reason: "none",
+    category: "none",
+    count: 0
+  };
+  const topCategory = categoryRollup[0] ?? {
+    rank: 0,
+    category: "none",
+    count: 0
+  };
+
+  return {
+    breached: triggeredBreakers.length > 0,
+    classification: triggeredBreakers.length > 0 ? "critical_breach" : "clear",
+    topCause,
+    topCategory,
+    causeRollup,
+    categoryRollup
+  };
 }
 
 export function evaluateCircuitBreakers(signal, thresholds = DEFAULT_BREAKER_THRESHOLDS) {
@@ -128,6 +199,7 @@ export function evaluateCircuitBreakers(signal, thresholds = DEFAULT_BREAKER_THR
   const reasons = triggeredBreakers.map((breaker) => breaker.reason);
   const primaryReason = reasons[0] ?? "none";
   const killSwitchMode = normalizedSignal.killSwitchActive ? "manual" : triggered ? "automatic" : "inactive";
+  const criticalBreachClassifier = buildCriticalBreachClassifier(triggeredBreakers);
 
   return {
     triggered,
@@ -135,6 +207,27 @@ export function evaluateCircuitBreakers(signal, thresholds = DEFAULT_BREAKER_THR
     reasons,
     shouldHalt: triggered,
     triggeredBreakers,
+    criticalBreachClassifier,
+    operationalEvidenceSnapshot: {
+      signal: { ...normalizedSignal },
+      thresholds: {
+        maxConsecutiveExecutionFailures: toFiniteNumber(thresholds.maxConsecutiveExecutionFailures),
+        maxSlippageOutlierBreaches: toFiniteNumber(thresholds.maxSlippageOutlierBreaches),
+        maxFeedStalenessMs: toFiniteNumber(thresholds.maxFeedStalenessMs),
+        maxReconciliationMismatches: toFiniteNumber(thresholds.maxReconciliationMismatches),
+        maxReconciliationUnresolvedMs: toFiniteNumber(thresholds.maxReconciliationUnresolvedMs),
+        maxProviderDegradationMs: toFiniteNumber(thresholds.maxProviderDegradationMs)
+      },
+      triggeredBreakers: triggeredBreakers.map((breaker) => ({
+        id: breaker.id,
+        reason: breaker.reason,
+        metric: breaker.metric,
+        comparator: breaker.comparator,
+        metricValue: breaker.metricValue,
+        thresholdValue: breaker.thresholdValue
+      })),
+      criticalBreachClassifier
+    },
     killSwitch: {
       engage: triggered,
       mode: killSwitchMode,

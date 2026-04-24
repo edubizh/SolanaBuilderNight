@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { RiskEngine } from "../../../services/risk-engine/src/index.js";
 import {
+  buildReconciliationOperationalEvidenceSnapshot,
   buildDeterministicReconciliationLedger,
   evaluateReconciliation,
   evaluateReconciliationDrift
@@ -154,6 +155,16 @@ test("paper arbitrage outputs produce deterministic accounting and reconciliatio
   assert.equal(paperRiskResult.accountingLogs[0].intentId, "intent-1");
   assert.equal(paperRiskResult.accountingLogs[1].intentId, "intent-2");
   assert.equal(paperRiskResult.accountingLogs[0].sequence, 1);
+  assert.deepEqual(paperRiskResult.rejectionCauseRollup, []);
+  assert.equal(paperRiskResult.operationalEvidenceSnapshot.accountingLogs[0].intentId, "intent-1");
   assert.equal(reconciliationLedger[0].intentId, "intent-1");
   assert.equal(reconciliationLedger[1].intentId, "intent-2");
+
+  const reconciliationEvidence = buildReconciliationOperationalEvidenceSnapshot(reconciliationLedger);
+  assert.equal(reconciliationEvidence.totals.ledgerEntries, 2);
+  assert.equal(reconciliationEvidence.totals.mismatchedEntries, 1);
+  assert.deepEqual(reconciliationEvidence.mismatchRollup, [
+    { rank: 1, reason: "quantity_drift_exceeded", count: 1 },
+    { rank: 2, reason: "value_drift_exceeded", count: 1 }
+  ]);
 });

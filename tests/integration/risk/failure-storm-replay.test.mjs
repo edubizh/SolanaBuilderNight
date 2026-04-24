@@ -72,6 +72,16 @@ test("risk replay storm captures multi-vector failures in deterministic reason o
   assert.equal(runtimeDecision.killSwitch.engage, true);
   assert.equal(runtimeDecision.killSwitch.mode, "automatic");
   assert.equal(runtimeDecision.killSwitch.resumeRequiresApproval, true);
+  assert.equal(runtimeDecision.criticalBreachClassifier.topCause.reason, "consecutive_execution_failures");
+  assert.deepEqual(runtimeDecision.criticalBreachClassifier.categoryRollup, [
+    { rank: 1, category: "execution_quality", count: 1 },
+    { rank: 2, category: "execution_reliability", count: 1 },
+    { rank: 3, category: "market_data_integrity", count: 1 },
+    { rank: 4, category: "policy_integrity", count: 1 },
+    { rank: 5, category: "provider_health", count: 1 },
+    { rank: 6, category: "reconciliation_integrity", count: 1 }
+  ]);
+  assert.equal(runtimeDecision.operationalEvidenceSnapshot.criticalBreachClassifier.classification, "critical_breach");
 });
 
 test("paper arbitrage rejection storm engages simulated breaker with deterministic reasons", () => {
@@ -130,4 +140,13 @@ test("paper arbitrage rejection storm engages simulated breaker with determinist
     "critical_rule_breach",
     "reconciliation_mismatch_threshold"
   ]);
+  assert.deepEqual(result.rejectionCauseRollup, [
+    { rank: 1, reason: "aggregate_open_exposure_limit_exceeded", count: 2 },
+    { rank: 2, reason: "no_naked_exposure_required", count: 2 },
+    { rank: 3, reason: "paper_intent_notional_limit_exceeded", count: 2 },
+    { rank: 4, reason: "projected_paper_loss_limit_exceeded", count: 2 },
+    { rank: 5, reason: "venue_open_exposure_limit_exceeded", count: 2 },
+    { rank: 6, reason: "market_open_exposure_limit_exceeded", count: 1 }
+  ]);
+  assert.equal(result.operationalEvidenceSnapshot.rejectionCauseRollup[0].reason, "aggregate_open_exposure_limit_exceeded");
 });

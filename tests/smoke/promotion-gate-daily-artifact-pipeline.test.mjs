@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 
 const SCRIPT_PATH = "infra/ci/build-promotion-gate-daily-artifacts.mjs";
 
-function runPipelineRaw(evaluator, context) {
+function runPipelineRaw(evaluator, context, envOverrides = {}) {
   const tempRoot = mkdtempSync(join(tmpdir(), "promotion-gate-pipeline-"));
   const evaluatorPath = join(tempRoot, "evaluator.json");
   const contextPath = join(tempRoot, "context.json");
@@ -24,6 +24,7 @@ function runPipelineRaw(evaluator, context) {
       env: {
         ...process.env,
         PROMOTION_GATE_ARTIFACT_DIR: artifactDir,
+        ...envOverrides,
       },
     },
   );
@@ -106,6 +107,7 @@ test("daily pipeline fails deterministically on missing required context with ex
   try {
     assert.notEqual(run.result.status, 0, "Expected non-zero exit when required context data is missing.");
     const output = `${run.result.stderr}\n${run.result.stdout}`;
+    assert.match(output, /DIAGNOSTIC_CODE=missing_required_input/);
     assert.match(output, /BLOCKER_REASON=missing_required_input:guarded_live_started_at_utc_ms/);
     assert.equal(existsSync(run.artifactDir), false, "No artifact directory should be written on deterministic input failure.");
   } finally {
@@ -148,6 +150,74 @@ test("daily pipeline computes deterministic remaining-to-unlock guidance", () =>
       "Raise realized PnL above 0 USD.",
       "Reduce critical risk breaches to 0.",
     ]);
+  } finally {
+    rmSync(run.tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("daily pipeline enforces deterministic retention by UTC stamp", () => {
+  const evaluator = {
+    as_of_utc: "2026-04-24T00:00:00.000Z",
+    paper_days_completed: 7,
+    guarded_live_days_completed: 3,
+    realized_pnl_usd: 12.4,
+    critical_risk_breaches: 0,
+    overall_pass: true,
+    failed_criteria: [],
+  };
+  const context = {
+    paper_started_at_utc_ms: Date.parse("2026-04-17T23:59:59.999Z"),
+    guarded_live_started_at_utc_ms: Date.parse("2026-04-21T00:00:00.000Z"),
+  };
+
+  const run = runPipelineRaw(evaluator, context, {
+    PROMOTION_GATE_DAILY_RETENTION_RUNS: "2",
+  });
+  try {
+    assert.equal(run.result.status, 0, run.result.stderr || run.result.stdout);
+    writeFileSync(
+      join(run.artifactDir, "promotion-gate-daily-snapshot-20260421T000000Z.json"),
+      "{}\n",
+      "utf8",
+    );
+    writeFileSync(
+      join(run.artifactDir, "promotion-gate-daily-summary-20260421T000000Z.md"),
+      "# old\n",
+      "utf8",
+    );
+    writeFileSync(
+      join(run.artifactDir, "promotion-gate-daily-snapshot-20260422T000000Z.json"),
+      "{}\n",
+      "utf8",
+    );
+    writeFileSync(
+      join(run.artifactDir, "promotion-gate-daily-summary-20260422T000000Z.md"),
+      "# old\n",
+      "utf8",
+    );
+
+    const second = spawnSync(
+      process.execPath,
+      [SCRIPT_PATH, join(run.tempRoot, "evaluator.json"), join(run.tempRoot, "context.json")],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PROMOTION_GATE_ARTIFACT_DIR: run.artifactDir,
+          PROMOTION_GATE_DAILY_RETENTION_RUNS: "2",
+        },
+      },
+    );
+    assert.equal(second.status, 0, second.stderr || second.stdout);
+    const files = readdirSync(run.artifactDir).filter((name) => name.startsWith("promotion-gate-daily-"));
+    const old20260421 = files.filter((name) => name.includes("20260421T000000Z"));
+    assert.equal(old20260421.length, 0, "Expected oldest stamp artifacts to be pruned.");
+    const retainedStamps = new Set(
+      files
+        .map((name) => name.match(/promotion-gate-daily-(?:snapshot|summary)-(\d{8}T\d{6}Z)\./)?.[1])
+        .filter(Boolean),
+    );
+    assert.equal(retainedStamps.size, 2, "Expected exactly two newest UTC stamps to remain.");
   } finally {
     rmSync(run.tempRoot, { recursive: true, force: true });
   }

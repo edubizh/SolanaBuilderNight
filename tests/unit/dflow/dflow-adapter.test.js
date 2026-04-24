@@ -295,3 +295,167 @@ test("DFlowAdapter order-status integrity fails when state missing", () => {
   assert.equal(report.parsed.status, null);
   assert.ok(report.errors.includes("missing parseable order status state"));
 });
+
+test("DFlowAdapter retries transient GET failures with deterministic backoff", async () => {
+  let attempts = 0;
+  const sleeps = [];
+  const adapter = new DFlowAdapter({
+    tradingBaseUrl: "https://example.dflow",
+    sleepImpl: async (ms) => {
+      sleeps.push(ms);
+    },
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        return new Response(JSON.stringify({ error: "unavailable" }), { status: 503 });
+      }
+      return new Response(JSON.stringify({ quoteId: "quote-retry-1", timestampMs: Date.now() }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  const quote = await adapter.getQuote({ market: "mkt-1", side: "buy" });
+  assert.equal(quote.quoteId, "quote-retry-1");
+  assert.equal(attempts, 3);
+  assert.deepEqual(sleeps, [100, 200]);
+});
+
+test("DFlowAdapter does not retry direct POST /swap by default", async () => {
+  let attempts = 0;
+  const adapter = new DFlowAdapter({
+    tradingBaseUrl: "https://example.dflow",
+    sleepImpl: async () => {},
+    fetchImpl: async () => {
+      attempts += 1;
+      return new Response(JSON.stringify({ error: "throttled" }), { status: 429 });
+    },
+  });
+
+  await assert.rejects(() => adapter.postSwap({ quoteId: "quote-1", intentId: "intent-1" }), /failed \(429\)/);
+  assert.equal(attempts, 1);
+});
+
+test("DFlowAdapter retries idempotent swap submissions on transient failures", async () => {
+  let attempts = 0;
+  const sleeps = [];
+  const adapter = new DFlowAdapter({
+    tradingBaseUrl: "https://example.dflow",
+    sleepImpl: async (ms) => {
+      sleeps.push(ms);
+    },
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        return new Response(JSON.stringify({ error: "busy" }), { status: 503 });
+      }
+      return new Response(JSON.stringify({ swapId: "swap-retry-1", status: "submitted" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  const submission = await adapter.postSwapIdempotent({ intentId: "intent-retry-1", quoteId: "quote-retry-1" });
+  assert.equal(submission.swap.swapId, "swap-retry-1");
+  assert.equal(attempts, 3);
+  assert.deepEqual(sleeps, [100, 200]);
+});
+
+test("DFlowAdapter guarded live fails closed on quote fetch errors without consuming approval", async () => {
+  const adapter = new DFlowAdapter({
+    tradingBaseUrl: "https://example.dflow",
+    guardrails: { mode: "guarded_live" },
+    fetchImpl: async (url) => {
+      const path = new URL(url).pathname;
+      if (path === "/quote") {
+        throw new TypeError("network down");
+      }
+      return new Response(JSON.stringify({ swapId: "never" }), { status: 200 });
+    },
+  });
+
+  const approval = adapter.createGuardedLiveApproval({
+    intentId: "intent-quote-fail-1",
+    estimatedNotionalUsd: 100,
+    approvedBy: "ops-worker-3",
+  });
+
+  const artifact = await adapter.executeGuardedLiveSwap(
+    {
+      intentId: "intent-quote-fail-1",
+      quoteParams: { market: "mkt-1", side: "buy" },
+      swapPayload: { intentId: "intent-quote-fail-1", quoteId: "quote-1" },
+      riskContext: {
+        estimatedNotionalUsd: 100,
+        currentNetExposureUsd: 40,
+        projectedNetExposureUsd: 20,
+      },
+    },
+    { live: true, approvalId: approval.approvalId, nowMs: Date.parse("2026-04-24T21:00:00.000Z") },
+  );
+
+  assert.equal(artifact.liveExecuted, false);
+  assert.equal(artifact.assessment.allowed, false);
+  assert.ok(artifact.assessment.violations.includes("quote fetch failed before live submission"));
+  const persistedApproval = adapter.approvalStore.get(approval.approvalId);
+  assert.equal(persistedApproval.used, false);
+});
+
+test("DFlowAdapter guarded live fails closed on submission failures after consuming approval", async () => {
+  let quoteCalls = 0;
+  let swapCalls = 0;
+  const adapter = new DFlowAdapter({
+    tradingBaseUrl: "https://example.dflow",
+    guardrails: { mode: "guarded_live" },
+    fetchImpl: async (url) => {
+      const path = new URL(url).pathname;
+      if (path === "/quote") {
+        quoteCalls += 1;
+        return new Response(
+          JSON.stringify({
+            quoteId: "quote-fail-submit-1",
+            timestampMs: Date.parse("2026-04-24T21:10:00.000Z"),
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      swapCalls += 1;
+      return new Response(JSON.stringify({ error: "service unavailable" }), { status: 503 });
+    },
+  });
+
+  const approval = adapter.createGuardedLiveApproval({
+    intentId: "intent-submit-fail-1",
+    estimatedNotionalUsd: 120,
+    approvedBy: "ops-worker-3",
+    approvedAtMs: Date.parse("2026-04-24T21:10:00.000Z"),
+  });
+
+  const artifact = await adapter.executeGuardedLiveSwap(
+    {
+      intentId: "intent-submit-fail-1",
+      quoteParams: { market: "mkt-2", side: "sell" },
+      swapPayload: {
+        intentId: "intent-submit-fail-1",
+        quoteId: "quote-fail-submit-1",
+        idempotencyKey: "intent-submit-fail-1",
+      },
+      riskContext: {
+        estimatedNotionalUsd: 120,
+        currentNetExposureUsd: 200,
+        projectedNetExposureUsd: 100,
+      },
+    },
+    { live: true, approvalId: approval.approvalId, nowMs: Date.parse("2026-04-24T21:10:02.000Z") },
+  );
+
+  assert.equal(quoteCalls, 1);
+  assert.equal(swapCalls, 3);
+  assert.equal(artifact.liveExecuted, false);
+  assert.equal(artifact.assessment.allowed, false);
+  assert.ok(artifact.assessment.violations.includes("swap submission failed after approval consumption"));
+  const persistedApproval = adapter.approvalStore.get(approval.approvalId);
+  assert.equal(persistedApproval.used, true);
+});

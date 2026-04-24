@@ -1,4 +1,8 @@
 const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_RETRY_MAX_ATTEMPTS = 3;
+const DEFAULT_RETRY_INITIAL_BACKOFF_MS = 100;
+const DEFAULT_RETRY_MAX_BACKOFF_MS = 1_000;
+const DEFAULT_RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_TX_ENCODING = "base64";
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 250;
 const DEFAULT_STATUS_MAX_ATTEMPTS = 20;
@@ -38,6 +42,7 @@ export class DFlowAdapter {
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.sleepImpl = config.sleepImpl ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.retryConfig = this.#createRetryConfig(config.retryPolicy);
     this.idempotentSubmissionStore = config.idempotentSubmissionStore ?? new Map();
     this.terminalStateStore = config.terminalStateStore ?? new Map();
     this.guardrailConfig = this.#createGuardrailConfig(config.guardrails);
@@ -191,8 +196,12 @@ export class DFlowAdapter {
   /**
    * @param {Record<string, unknown>} payload
    */
-  async postSwap(payload) {
-    return this.#request("POST", this.tradingBaseUrl, "/swap", { body: payload });
+  async postSwap(payload, options = {}) {
+    return this.#request("POST", this.tradingBaseUrl, "/swap", {
+      body: payload,
+      allowRetry: options.allowRetry === true,
+      retryPolicy: options.retryPolicy,
+    });
   }
 
   /**
@@ -212,7 +221,7 @@ export class DFlowAdapter {
       };
     }
 
-    const submissionPromise = this.postSwap(payload)
+    const submissionPromise = this.postSwap(payload, { allowRetry: true })
       .then((swap) => ({
         idempotencyKey,
         deduplicated: false,
@@ -352,10 +361,23 @@ export class DFlowAdapter {
       intentId: assessment.intentId,
       estimatedNotionalUsd: assessment.risk.estimatedNotionalUsd,
       nowMs,
+      consume: false,
     });
     artifact.approval = approval;
 
-    const quoteIntegrity = await this.getQuoteIntegrity(request.quoteParams ?? {}, { nowMs });
+    let quoteIntegrity;
+    try {
+      quoteIntegrity = await this.getQuoteIntegrity(request.quoteParams ?? {}, { nowMs });
+    } catch (error) {
+      artifact.assessment.allowed = false;
+      artifact.assessment.violations.push("quote fetch failed before live submission");
+      artifact.quoteIntegrity = {
+        ok: false,
+        errors: [`quote fetch failed: ${error?.message ?? "unknown error"}`],
+      };
+      this.#recordAudit("guarded_rejected_quote_fetch_error", artifact);
+      return artifact;
+    }
     artifact.quoteIntegrity = quoteIntegrity;
     if (!quoteIntegrity.ok) {
       artifact.assessment.allowed = false;
@@ -364,13 +386,32 @@ export class DFlowAdapter {
       return artifact;
     }
 
-    const submission = await this.postSwapIdempotent(request.swapPayload ?? {}, {
-      idempotencyKey: request.swapPayload?.idempotencyKey ?? assessment.intentId,
+    artifact.approval = this.#consumeValidApproval({
+      approvalId: options.approvalId,
+      intentId: assessment.intentId,
+      estimatedNotionalUsd: assessment.risk.estimatedNotionalUsd,
+      nowMs,
+      consume: true,
     });
-    artifact.liveExecuted = true;
-    artifact.submission = submission;
-    this.#incrementDailyNotionalLedger(assessment.risk.estimatedNotionalUsd, nowMs);
-    this.#recordAudit("guarded_live_executed", artifact);
+
+    try {
+      const submission = await this.postSwapIdempotent(request.swapPayload ?? {}, {
+        idempotencyKey: request.swapPayload?.idempotencyKey ?? assessment.intentId,
+      });
+      artifact.liveExecuted = true;
+      artifact.submission = submission;
+      this.#incrementDailyNotionalLedger(assessment.risk.estimatedNotionalUsd, nowMs);
+      this.#recordAudit("guarded_live_executed", artifact);
+    } catch (error) {
+      artifact.liveExecuted = false;
+      artifact.assessment.allowed = false;
+      artifact.assessment.violations.push("swap submission failed after approval consumption");
+      artifact.submission = {
+        ok: false,
+        error: error?.message ?? "unknown submission error",
+      };
+      this.#recordAudit("guarded_rejected_submission_error", artifact);
+    }
     return artifact;
   }
 
@@ -519,26 +560,55 @@ export class DFlowAdapter {
       }
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const retryPolicy = this.#resolveRetryPolicy(options.retryPolicy, method, options.allowRetry === true);
+    const maxAttempts = retryPolicy.maxAttempts;
+    let lastError = null;
 
-    try {
-      const response = await this.fetchImpl(url, {
-        method,
-        headers: options.body ? { "content-type": "application/json" } : undefined,
-        body: options.body ? JSON.stringify(options.body) : undefined,
-        signal: controller.signal,
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const response = await this.fetchImpl(url, {
+          method,
+          headers: options.body ? { "content-type": "application/json" } : undefined,
+          body: options.body ? JSON.stringify(options.body) : undefined,
+          signal: controller.signal,
+        });
 
-      const text = await response.text();
-      const data = text.length > 0 ? JSON.parse(text) : {};
-      if (!response.ok) {
-        throw new Error(`DFlow ${method} ${path} failed (${response.status})`);
+        const text = await response.text();
+        const data = text.length > 0 ? JSON.parse(text) : {};
+        if (!response.ok) {
+          const error = new Error(`DFlow ${method} ${path} failed (${response.status})`);
+          error.retryable = retryPolicy.retryableStatusCodes.has(response.status);
+          lastError = error;
+          if (!error.retryable || attempt >= maxAttempts) {
+            throw error;
+          }
+          const backoffMs = this.#computeDeterministicBackoffMs(attempt, retryPolicy);
+          if (backoffMs > 0) {
+            await this.sleepImpl(backoffMs);
+          }
+          continue;
+        }
+        return data;
+      } catch (error) {
+        lastError = error;
+        const isAbortError = error?.name === "AbortError";
+        const retryableByType = isAbortError
+          ? retryPolicy.retryOnTimeout
+          : this.#isRetryableTransportError(error, retryPolicy);
+        if (!retryableByType || attempt >= maxAttempts) {
+          throw error;
+        }
+        const backoffMs = this.#computeDeterministicBackoffMs(attempt, retryPolicy);
+        if (backoffMs > 0) {
+          await this.sleepImpl(backoffMs);
+        }
+      } finally {
+        clearTimeout(timeout);
       }
-      return data;
-    } finally {
-      clearTimeout(timeout);
     }
+    throw lastError ?? new Error(`DFlow ${method} ${path} failed after retries`);
   }
 
   /**
@@ -922,7 +992,7 @@ export class DFlowAdapter {
     };
   }
 
-  #consumeValidApproval({ approvalId, intentId, estimatedNotionalUsd, nowMs }) {
+  #consumeValidApproval({ approvalId, intentId, estimatedNotionalUsd, nowMs, consume = true }) {
     const normalizedApprovalId = this.#asNonEmptyString(approvalId);
     if (!normalizedApprovalId) {
       throw new Error("guarded-live live execution requires approvalId");
@@ -947,11 +1017,11 @@ export class DFlowAdapter {
       );
     }
 
-    const consumed = {
-      ...approval,
-      used: true,
-      usedAtMs: nowMs,
-    };
+    if (!consume) {
+      return { ...approval };
+    }
+
+    const consumed = { ...approval, used: true, usedAtMs: nowMs };
     this.approvalStore.set(normalizedApprovalId, consumed);
     return consumed;
   }
@@ -975,6 +1045,57 @@ export class DFlowAdapter {
       emittedAtMs: Date.now(),
       payload,
     });
+  }
+
+  #createRetryConfig(retryPolicy) {
+    const maxAttempts = this.#asFiniteNumber(retryPolicy?.maxAttempts) ?? DEFAULT_RETRY_MAX_ATTEMPTS;
+    const initialBackoffMs =
+      this.#asFiniteNumber(retryPolicy?.initialBackoffMs) ?? DEFAULT_RETRY_INITIAL_BACKOFF_MS;
+    const maxBackoffMs = this.#asFiniteNumber(retryPolicy?.maxBackoffMs) ?? DEFAULT_RETRY_MAX_BACKOFF_MS;
+    const retryableStatusCodes = Array.isArray(retryPolicy?.retryableStatusCodes)
+      ? new Set(retryPolicy.retryableStatusCodes.filter((status) => Number.isInteger(status)))
+      : DEFAULT_RETRYABLE_STATUS_CODES;
+    return {
+      maxAttempts: Math.max(1, Math.trunc(maxAttempts)),
+      initialBackoffMs: Math.max(0, Math.trunc(initialBackoffMs)),
+      maxBackoffMs: Math.max(0, Math.trunc(maxBackoffMs)),
+      retryableStatusCodes,
+      retryOnTimeout: retryPolicy?.retryOnTimeout !== false,
+      retryOnNetworkError: retryPolicy?.retryOnNetworkError !== false,
+    };
+  }
+
+  #resolveRetryPolicy(retryPolicyOverride, method, allowRetry) {
+    const merged = this.#createRetryConfig({
+      ...this.retryConfig,
+      ...(retryPolicyOverride ?? {}),
+    });
+    if (method === "POST" && !allowRetry) {
+      return {
+        ...merged,
+        maxAttempts: 1,
+      };
+    }
+    return merged;
+  }
+
+  #computeDeterministicBackoffMs(attempt, retryPolicy) {
+    const exponent = Math.max(attempt - 1, 0);
+    return Math.min(retryPolicy.maxBackoffMs, retryPolicy.initialBackoffMs * 2 ** exponent);
+  }
+
+  #isRetryableTransportError(error, retryPolicy) {
+    if (!retryPolicy.retryOnNetworkError) {
+      return false;
+    }
+    if (error?.retryable === true) {
+      return true;
+    }
+    const code = this.#asNonEmptyString(error?.code);
+    if (code && ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH"].includes(code)) {
+      return true;
+    }
+    return error instanceof TypeError;
   }
 
   #asFiniteNumber(value) {

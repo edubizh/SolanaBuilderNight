@@ -160,6 +160,22 @@ test("manual kill-switch takes priority and still captures additional breakers",
   assert.ok(runtimeDecision.reasons.includes("critical_feed_staleness"));
   assert.ok(runtimeDecision.reasons.includes("reconciliation_unresolved_drift_timeout"));
   assert.equal(runtimeDecision.killSwitch.mode, "manual");
+  assert.equal(runtimeDecision.criticalBreachClassifier.classification, "critical_breach");
+  assert.equal(runtimeDecision.criticalBreachClassifier.topCause.reason, "consecutive_execution_failures");
+  assert.equal(runtimeDecision.criticalBreachClassifier.topCategory.category, "reconciliation_integrity");
+  assert.deepEqual(
+    runtimeDecision.criticalBreachClassifier.categoryRollup.map((entry) => entry.category),
+    [
+      "reconciliation_integrity",
+      "execution_quality",
+      "execution_reliability",
+      "market_data_integrity",
+      "operator_control",
+      "provider_health"
+    ]
+  );
+  assert.equal(runtimeDecision.operationalEvidenceSnapshot.signal.killSwitchActive, true);
+  assert.equal(runtimeDecision.operationalEvidenceSnapshot.thresholds.maxProviderDegradationMs, 30_000);
 });
 
 test("paper arbitrage risk controls approve safe intents and emit deterministic logs", () => {
@@ -254,6 +270,16 @@ test("paper arbitrage risk controls enforce no-naked-exposure and conservative l
   assert.ok(result.rejectedIntents[0].reasons.includes("market_open_exposure_limit_exceeded"));
   assert.ok(result.rejectedIntents[0].reasons.includes("projected_paper_loss_limit_exceeded"));
   assert.equal(result.accountingLogs[0].decision, "rejected");
+  assert.deepEqual(result.rejectionCauseRollup, [
+    { rank: 1, reason: "aggregate_open_exposure_limit_exceeded", count: 1 },
+    { rank: 2, reason: "market_open_exposure_limit_exceeded", count: 1 },
+    { rank: 3, reason: "no_naked_exposure_required", count: 1 },
+    { rank: 4, reason: "paper_intent_notional_limit_exceeded", count: 1 },
+    { rank: 5, reason: "projected_paper_loss_limit_exceeded", count: 1 },
+    { rank: 6, reason: "venue_open_exposure_limit_exceeded", count: 1 }
+  ]);
   assert.equal(result.riskBreakerSimulation.triggered, true);
   assert.equal(result.riskBreakerSimulation.reason, "critical_rule_breach");
+  assert.equal(result.riskBreakerSimulation.criticalBreachClassifier.topCause.reason, "critical_rule_breach");
+  assert.equal(result.operationalEvidenceSnapshot.riskBreakerSimulation.criticalBreachClassifier.classification, "critical_breach");
 });

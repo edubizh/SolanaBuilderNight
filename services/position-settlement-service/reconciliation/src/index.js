@@ -97,3 +97,37 @@ export function buildDeterministicReconciliationLedger(entries = []) {
     ...entry
   }));
 }
+
+export function buildReconciliationOperationalEvidenceSnapshot(entries = []) {
+  const ledger = buildDeterministicReconciliationLedger(entries);
+  const mismatchReasonCounts = new Map();
+
+  for (const entry of ledger) {
+    for (const mismatch of entry.mismatches) {
+      mismatchReasonCounts.set(mismatch, (mismatchReasonCounts.get(mismatch) ?? 0) + 1);
+    }
+  }
+
+  const mismatchRollup = [...mismatchReasonCounts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      return a.reason.localeCompare(b.reason);
+    })
+    .map((entry, index) => ({
+      rank: index + 1,
+      ...entry
+    }));
+
+  return {
+    totals: {
+      ledgerEntries: ledger.length,
+      matchedEntries: ledger.filter((entry) => entry.matched).length,
+      mismatchedEntries: ledger.filter((entry) => !entry.matched).length
+    },
+    mismatchRollup,
+    ledger
+  };
+}

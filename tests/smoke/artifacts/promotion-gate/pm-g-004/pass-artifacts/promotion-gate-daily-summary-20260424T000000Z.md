@@ -1,6 +1,6 @@
 # Promotion Gate Daily Summary (20260424T000000Z)
 
-- Task: PM-G-002
+- Task: PM-O-001
 - As of (UTC): 2026-04-24T00:00:00.000Z
 - Evaluator contract source: PM-G-001
 - Overall pass: YES
@@ -14,6 +14,11 @@
 - Policy: STRICT_UTC_WALL_CLOCK
 - Rule: Completed days are counted by UTC day boundaries only.
 - Rule: No rolling-hour approximation and no fractional UTC-day credit.
+
+## Retention Policy
+
+- Mode: deterministic_keep_latest_utc_stamps
+- Retention runs: 30
 
 ## Failed Criteria
 

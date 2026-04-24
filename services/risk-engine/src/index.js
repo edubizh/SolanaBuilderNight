@@ -124,12 +124,14 @@ export class RiskEngine {
       reconciliationUnresolvedMs: 0,
       providerDegradationMs: 0
     });
+    const rejectionCauseRollup = buildDeterministicReasonRollup(rejectedIntents);
 
     return {
       acceptedIntents,
       rejectedIntents,
       accountingLogs,
       decisionLogs: combinedDecisionLogs,
+      rejectionCauseRollup,
       exposureSnapshot: {
         aggregateOpenExposureUsd: runningAggregateExposure,
         byMarket: Object.fromEntries([...runningMarketExposure.entries()].sort(([a], [b]) => a.localeCompare(b))),
@@ -138,7 +140,18 @@ export class RiskEngine {
       pnlSnapshot: {
         projectedDailyPaperLossUsd: runningProjectedLoss
       },
-      riskBreakerSimulation
+      riskBreakerSimulation,
+      operationalEvidenceSnapshot: {
+        accountingLogs: accountingLogs.map((entry) => ({
+          sequence: entry.sequence,
+          intentId: entry.intentId,
+          traceId: entry.traceId,
+          decision: entry.decision,
+          reasons: [...entry.reasons]
+        })),
+        rejectionCauseRollup,
+        riskBreakerSimulation: riskBreakerSimulation.operationalEvidenceSnapshot
+      }
     };
   }
 }
@@ -237,6 +250,29 @@ function evaluatePaperIntent({
     expectedValueUsd: expectedValueUsd ?? 0,
     projectedWorstCaseLossUsd
   };
+}
+
+function buildDeterministicReasonRollup(rejectedIntents) {
+  const reasonCounts = new Map();
+
+  for (const rejectedEntry of rejectedIntents) {
+    for (const reason of rejectedEntry.reasons ?? []) {
+      reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+    }
+  }
+
+  return [...reasonCounts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      return a.reason.localeCompare(b.reason);
+    })
+    .map((entry, index) => ({
+      rank: index + 1,
+      ...entry
+    }));
 }
 
 export { evaluateHardLimits, evaluateCircuitBreakers, DEFAULT_HARD_LIMITS, DEFAULT_BREAKER_THRESHOLDS };

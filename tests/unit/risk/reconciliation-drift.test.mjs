@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildReconciliationOperationalEvidenceSnapshot,
   buildDeterministicReconciliationLedger,
   evaluateReconciliationDrift
 } from "../../../services/position-settlement-service/reconciliation/src/index.js";
@@ -79,4 +80,53 @@ test("deterministic reconciliation ledger sorts and sequences accounting entries
   assert.equal(ledger[1].sequence, 2);
   assert.equal(ledger[0].intentId, "intent-a");
   assert.equal(ledger[1].intentId, "intent-z");
+});
+
+test("reconciliation operational evidence snapshot returns deterministic rollups", () => {
+  const snapshot = buildReconciliationOperationalEvidenceSnapshot([
+    {
+      intentId: "intent-c",
+      traceId: "trace-3",
+      canonicalMarketId: "market-z",
+      matched: false,
+      quantityDriftPct: 0.02,
+      valueDriftUsd: 10,
+      mismatches: ["value_drift_exceeded", "quantity_drift_exceeded", "value_drift_exceeded"],
+      recordedAtMs: 400
+    },
+    {
+      intentId: "intent-a",
+      traceId: "trace-1",
+      canonicalMarketId: "market-a",
+      matched: true,
+      quantityDriftPct: 0,
+      valueDriftUsd: 0,
+      mismatches: [],
+      recordedAtMs: 100
+    },
+    {
+      intentId: "intent-b",
+      traceId: "trace-2",
+      canonicalMarketId: "market-y",
+      matched: false,
+      quantityDriftPct: 0.01,
+      valueDriftUsd: 9,
+      mismatches: ["quantity_drift_exceeded"],
+      recordedAtMs: 300
+    }
+  ]);
+
+  assert.deepEqual(snapshot.totals, {
+    ledgerEntries: 3,
+    matchedEntries: 1,
+    mismatchedEntries: 2
+  });
+  assert.deepEqual(snapshot.mismatchRollup, [
+    { rank: 1, reason: "quantity_drift_exceeded", count: 2 },
+    { rank: 2, reason: "value_drift_exceeded", count: 1 }
+  ]);
+  assert.deepEqual(
+    snapshot.ledger.map((entry) => entry.intentId),
+    ["intent-a", "intent-b", "intent-c"]
+  );
 });

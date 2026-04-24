@@ -1,5 +1,7 @@
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_EXECUTION_MODE = "dry_run";
+const DEFAULT_REQUEST_RETRIES = 2;
+const DEFAULT_REQUEST_RETRY_DELAY_MS = 100;
 const DEFAULT_RISK_CAPS = Object.freeze({
   maxNotionalUsd: 250,
   maxDailyNotionalUsd: 2_500,
@@ -20,6 +22,8 @@ export class GeminiPredictionAdapter {
    * @param {{maxNotionalUsd?: number, maxDailyNotionalUsd?: number, maxSlippageBps?: number}} [config.riskCaps]
    * @param {boolean} [config.allowLiveExecution]
    * @param {(payload: object, context: object) => Promise<object>} [config.executeOrderHook]
+   * @param {number} [config.requestRetries]
+   * @param {number} [config.requestRetryDelayMs]
    */
   constructor(config = {}) {
     this.baseUrl = config.baseUrl ?? "https://api.gemini.com";
@@ -31,7 +35,13 @@ export class GeminiPredictionAdapter {
     this.requireAuthForQuote = config.requireAuthForQuote ?? false;
     this.executionMode = config.executionMode ?? DEFAULT_EXECUTION_MODE;
     this.allowLiveExecution = config.allowLiveExecution ?? false;
-    this.executeOrderHook = config.executeOrderHook ?? (async (payload) => this.#submitOrderLive(payload));
+    this.executeOrderHook =
+      config.executeOrderHook ?? (async (payload, context) => this.#submitOrderLive(payload, context));
+    this.requestRetries = this.#sanitizeNonNegativeInteger(config.requestRetries, DEFAULT_REQUEST_RETRIES);
+    this.requestRetryDelayMs = this.#sanitizeNonNegativeInteger(
+      config.requestRetryDelayMs,
+      DEFAULT_REQUEST_RETRY_DELAY_MS,
+    );
     this.riskCaps = {
       ...DEFAULT_RISK_CAPS,
       ...(config.riskCaps ?? {}),
@@ -148,28 +158,41 @@ export class GeminiPredictionAdapter {
       assessment.allowed = false;
     }
 
-    const liveExecuted = liveRequested && assessment.allowed;
+    let liveExecuted = liveRequested && assessment.allowed;
     let submission = {
       executed: false,
       simulated: true,
       providerOrderId: null,
       idempotencyKey: this.#buildIdempotencyKey(intentId),
       deduplicated: false,
+      attempts: 0,
     };
 
     if (liveExecuted) {
-      submission = {
-        ...submission,
-        ...(await this.submitOrder(input.swapPayload ?? {}, {
-          intentId,
-          approvalId: input.approvalId,
-          idempotencyKey: submission.idempotencyKey,
-        })),
-        executed: true,
-        simulated: false,
-      };
-      this.dailyNotionalByBucket.set(bucket, projectedDailyNotionalUsd);
-      this.#consumeApproval(input.approvalId, nowMs);
+      try {
+        submission = {
+          ...submission,
+          ...(await this.submitOrder(input.swapPayload ?? {}, {
+            intentId,
+            approvalId: input.approvalId,
+            idempotencyKey: submission.idempotencyKey,
+          })),
+          executed: true,
+          simulated: false,
+        };
+        this.dailyNotionalByBucket.set(bucket, projectedDailyNotionalUsd);
+        this.#consumeApproval(input.approvalId, nowMs);
+      } catch (error) {
+        liveExecuted = false;
+        assessment.allowed = false;
+        assessment.violations.push("LIVE_SUBMISSION_FAILED");
+        submission = {
+          ...submission,
+          executed: false,
+          simulated: true,
+          error: this.#toErrorMessage(error),
+        };
+      }
     }
 
     const artifact = {
@@ -328,25 +351,45 @@ export class GeminiPredictionAdapter {
       }
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const maxAttempts = this.requestRetries + 1;
+    let attempt = 0;
+    let lastError = null;
 
-    try {
-      const response = await this.fetchImpl(url, {
-        method,
-        headers: options.headers,
-        body: options.body,
-        signal: controller.signal,
-      });
-      const text = await response.text();
-      const data = text.length > 0 ? JSON.parse(text) : {};
-      if (!response.ok) {
-        throw new Error(`Gemini ${method} ${path} failed (${response.status})`);
+    while (attempt < maxAttempts) {
+      attempt += 1;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const response = await this.fetchImpl(url, {
+          method,
+          headers: options.headers,
+          body: options.body,
+          signal: controller.signal,
+        });
+        const text = await response.text();
+        const data = text.length > 0 ? JSON.parse(text) : {};
+        if (!response.ok) {
+          const httpError = this.#httpError(method, path, response.status);
+          if (!this.#isRetryableHttpStatus(response.status) || attempt >= maxAttempts) {
+            throw httpError;
+          }
+          lastError = httpError;
+          await this.#waitBeforeRetry();
+          continue;
+        }
+        return data;
+      } catch (error) {
+        if (!this.#isRetryableRequestError(error) || attempt >= maxAttempts) {
+          throw error;
+        }
+        lastError = error;
+        await this.#waitBeforeRetry();
+      } finally {
+        clearTimeout(timeout);
       }
-      return data;
-    } finally {
-      clearTimeout(timeout);
     }
+
+    throw lastError ?? new Error(`Gemini ${method} ${path} failed after retries`);
   }
 
   #normalizeOutcomes(outcomes) {
@@ -401,9 +444,14 @@ export class GeminiPredictionAdapter {
     return null;
   }
 
-  async #submitOrderLive(payload) {
+  async #submitOrderLive(payload, context = {}) {
+    const headers = { "content-type": "application/json" };
+    const idempotencyKey = this.#asString(context.idempotencyKey);
+    if (idempotencyKey) {
+      headers["x-idempotency-key"] = idempotencyKey;
+    }
     return this.#request("POST", "/v1/prediction/orders", {
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
     });
   }
@@ -526,5 +574,50 @@ export class GeminiPredictionAdapter {
       used: approval.used,
       usedAtMs: approval.usedAtMs,
     };
+  }
+
+  #sanitizeNonNegativeInteger(value, fallback) {
+    const parsed = this.#toFiniteNumber(value);
+    if (parsed === null || parsed < 0) {
+      return fallback;
+    }
+    return Math.trunc(parsed);
+  }
+
+  #httpError(method, path, status) {
+    const error = new Error(`Gemini ${method} ${path} failed (${status})`);
+    error.status = status;
+    return error;
+  }
+
+  #isRetryableHttpStatus(status) {
+    return status === 408 || status === 429 || (status >= 500 && status <= 599);
+  }
+
+  #isRetryableRequestError(error) {
+    if (!error || typeof error !== "object") {
+      return false;
+    }
+    if (error.name === "AbortError") {
+      return true;
+    }
+    if ("status" in error) {
+      return this.#isRetryableHttpStatus(error.status);
+    }
+    return error instanceof TypeError;
+  }
+
+  async #waitBeforeRetry() {
+    if (this.requestRetryDelayMs <= 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, this.requestRetryDelayMs));
+  }
+
+  #toErrorMessage(error) {
+    if (error instanceof Error && typeof error.message === "string" && error.message.length > 0) {
+      return error.message;
+    }
+    return "Unknown live submission error";
   }
 }

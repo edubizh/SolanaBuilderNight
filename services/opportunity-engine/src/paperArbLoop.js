@@ -49,12 +49,30 @@ import { createHash } from "node:crypto";
  * @property {string[]} reasons
  * @property {number} createdAtMs
  * @property {{ required: true, passed: boolean, reason: string }} noNakedExposure
+ * @property {number | null} expectedNetUsd
+ *
+ * @typedef {Object} OpportunityQualityTelemetry
+ * @property {{ accepted: number, skipped: number, total: number }} totals
+ * @property {Record<string, number>} acceptedByReason
+ * @property {Record<string, number>} skippedByReason
+ * @property {{
+ *   accepted: { count: number, min: number | null, max: number | null, avg: number | null, buckets: Record<string, number> },
+ *   skipped: { count: number, min: number | null, max: number | null, avg: number | null, buckets: Record<string, number> }
+ * }} expectedNetDistributions
+ *
+ * @typedef {Object} OperationalSnapshot
+ * @property {number} generatedAtMs
+ * @property {number} minSpreadToTrade
+ * @property {number} tradeNotionalUsd
+ * @property {"paper_only" | "live"} requestedExecutionMode
+ * @property {OpportunityQualityTelemetry} telemetry
+ * @property {PaperDecisionLog[]} decisions
  */
 
 /**
  * @param {ReadonlyArray<CanonicalQuoteInput>} inputs
  * @param {PaperArbLoopOptions} [options]
- * @returns {{ intents: SpreadToIntentArtifact[], decisionLogs: PaperDecisionLog[] }}
+ * @returns {{ intents: SpreadToIntentArtifact[], decisionLogs: PaperDecisionLog[], telemetry: OpportunityQualityTelemetry }}
  */
 export function runPaperArbitrageLoop(inputs, options = {}) {
   const executionMode = options.executionMode ?? "paper_only";
@@ -113,6 +131,7 @@ export function runPaperArbitrageLoop(inputs, options = {}) {
         reasons: reasons.sort(),
         createdAtMs: nowMs,
         noNakedExposure,
+        expectedNetUsd: null,
       });
       continue;
     }
@@ -164,12 +183,151 @@ export function runPaperArbitrageLoop(inputs, options = {}) {
         passed: true,
         reason: "paired_buy_and_sell_legs_confirmed",
       },
+      expectedNetUsd: expectedValueUsd,
     });
   }
 
   intents.sort((a, b) => b.spread - a.spread || a.canonicalMarketId.localeCompare(b.canonicalMarketId));
   decisionLogs.sort((a, b) => a.canonicalMarketId.localeCompare(b.canonicalMarketId));
-  return { intents, decisionLogs };
+  return { intents, decisionLogs, telemetry: buildOpportunityQualityTelemetry(decisionLogs) };
+}
+
+/**
+ * @param {{
+ *   intents: SpreadToIntentArtifact[],
+ *   decisionLogs: PaperDecisionLog[],
+ *   telemetry: OpportunityQualityTelemetry
+ * }} result
+ * @param {PaperArbLoopOptions} [options]
+ * @returns {OperationalSnapshot}
+ */
+export function buildOperationalSnapshot(result, options = {}) {
+  const nowMs = options.nowMs ?? Date.now();
+  const minSpreadToTrade = options.minSpreadToTrade ?? 0.01;
+  const tradeNotionalUsd = options.tradeNotionalUsd ?? 100;
+  const requestedExecutionMode = options.executionMode ?? "paper_only";
+  return {
+    generatedAtMs: nowMs,
+    minSpreadToTrade,
+    tradeNotionalUsd,
+    requestedExecutionMode,
+    telemetry: result.telemetry,
+    decisions: result.decisionLogs,
+  };
+}
+
+/**
+ * @param {OperationalSnapshot} snapshot
+ * @returns {string}
+ */
+export function serializeOperationalSnapshot(snapshot) {
+  return `${JSON.stringify(snapshot, null, 2)}\n`;
+}
+
+/**
+ * @param {PaperDecisionLog[]} decisionLogs
+ * @returns {OpportunityQualityTelemetry}
+ */
+function buildOpportunityQualityTelemetry(decisionLogs) {
+  /** @type {Record<string, number>} */
+  const acceptedByReason = {};
+  /** @type {Record<string, number>} */
+  const skippedByReason = {};
+  const acceptedExpectedNet = [];
+  const skippedExpectedNet = [];
+
+  for (const decisionLog of decisionLogs) {
+    const bucket = decisionLog.decision === "accepted" ? acceptedByReason : skippedByReason;
+    for (const reason of decisionLog.reasons) {
+      bucket[reason] = (bucket[reason] ?? 0) + 1;
+    }
+
+    if (decisionLog.expectedNetUsd !== null) {
+      if (decisionLog.decision === "accepted") {
+        acceptedExpectedNet.push(decisionLog.expectedNetUsd);
+      } else {
+        skippedExpectedNet.push(decisionLog.expectedNetUsd);
+      }
+    }
+  }
+
+  return {
+    totals: {
+      accepted: decisionLogs.filter((entry) => entry.decision === "accepted").length,
+      skipped: decisionLogs.filter((entry) => entry.decision === "rejected").length,
+      total: decisionLogs.length,
+    },
+    acceptedByReason: sortRecordKeys(acceptedByReason),
+    skippedByReason: sortRecordKeys(skippedByReason),
+    expectedNetDistributions: {
+      accepted: summarizeExpectedNetDistribution(acceptedExpectedNet),
+      skipped: summarizeExpectedNetDistribution(skippedExpectedNet),
+    },
+  };
+}
+
+/**
+ * @param {Record<string, number>} value
+ * @returns {Record<string, number>}
+ */
+function sortRecordKeys(value) {
+  /** @type {Record<string, number>} */
+  const result = {};
+  const keys = Object.keys(value).sort((a, b) => a.localeCompare(b));
+  for (const key of keys) {
+    result[key] = value[key];
+  }
+  return result;
+}
+
+/**
+ * @param {number[]} expectedNetValues
+ * @returns {{ count: number, min: number | null, max: number | null, avg: number | null, buckets: Record<string, number> }}
+ */
+function summarizeExpectedNetDistribution(expectedNetValues) {
+  const buckets = {
+    negative: 0,
+    low: 0,
+    medium: 0,
+    high: 0,
+    very_high: 0,
+  };
+
+  for (const expectedNet of expectedNetValues) {
+    if (expectedNet < 0) {
+      buckets.negative += 1;
+    } else if (expectedNet < 2) {
+      buckets.low += 1;
+    } else if (expectedNet < 5) {
+      buckets.medium += 1;
+    } else if (expectedNet < 10) {
+      buckets.high += 1;
+    } else {
+      buckets.very_high += 1;
+    }
+  }
+
+  if (expectedNetValues.length === 0) {
+    return {
+      count: 0,
+      min: null,
+      max: null,
+      avg: null,
+      buckets,
+    };
+  }
+
+  const min = Math.min(...expectedNetValues);
+  const max = Math.max(...expectedNetValues);
+  const avg = expectedNetValues.reduce((sum, value) => sum + value, 0) / expectedNetValues.length;
+
+  return {
+    count: expectedNetValues.length,
+    min: Number(min.toFixed(6)),
+    max: Number(max.toFixed(6)),
+    avg: Number(avg.toFixed(6)),
+    buckets,
+  };
 }
 
 /**

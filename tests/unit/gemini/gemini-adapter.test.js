@@ -85,5 +85,29 @@ test("GeminiPredictionAdapter auth-surface stub exposes headers without signing"
 
 test("GeminiPredictionAdapter blocks live execution path in Stage A", async () => {
   const adapter = new GeminiPredictionAdapter();
-  await assert.rejects(() => adapter.submitOrder(), /does not support live execution/);
+  await assert.rejects(() => adapter.submitOrder(), /allowLiveExecution=false/);
+});
+
+test("GeminiPredictionAdapter retries transient market fetch failures deterministically", async () => {
+  let attempts = 0;
+  const adapter = new GeminiPredictionAdapter({
+    requestRetries: 2,
+    requestRetryDelayMs: 0,
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        return new Response("{}", { status: 503, headers: { "content-type": "application/json" } });
+      }
+      return new Response(
+        JSON.stringify({
+          markets: [{ id: "mkt-r", symbol: "R", status: "OPEN", outcomes: [] }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const markets = await adapter.getMarkets();
+  assert.equal(markets[0].marketId, "mkt-r");
+  assert.equal(attempts, 3);
 });

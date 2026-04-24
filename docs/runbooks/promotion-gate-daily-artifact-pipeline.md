@@ -1,4 +1,4 @@
-# Promotion Gate Daily Artifact Pipeline (PM-G-002)
+# Promotion Gate Daily Artifact Pipeline (PM-O-001)
 
 ## Purpose
 
@@ -9,6 +9,8 @@ The pipeline produces:
 - machine-readable snapshot JSON
 - human-readable markdown summary
 - deterministic `Remaining To Unlock` guidance for operators
+- deterministic retention pruning of historical daily artifacts
+- deterministic failure diagnostics with stable machine-parsable codes
 
 ## Contract and Policy Requirements
 
@@ -86,7 +88,21 @@ Missing required input data is a hard deterministic failure:
 
 - process exits with non-zero code
 - logs include explicit blocker reason as `BLOCKER_REASON=missing_required_input:<field>`
+- logs include explicit diagnostic code as `DIAGNOSTIC_CODE=<stable_code>`
 - no promotion-gate output artifacts are written for failed runs
+
+## Retention Controls
+
+Repository variables control retention hardening:
+
+- `PROMOTION_GATE_DAILY_RETENTION_DAYS` (workflow upload retention, integer in `[1,90]`, default `14`)
+- `PROMOTION_GATE_DAILY_RETENTION_RUNS` (builder-side deterministic pruning by UTC stamp, integer in `[1,365]`, default `30`)
+
+Builder pruning behavior:
+
+- retention mode is `deterministic_keep_latest_utc_stamps`
+- newest UTC stamp groups are retained, older timestamped snapshot/summary pairs are deleted
+- retention is deterministic from artifact names, not filesystem mtimes
 
 ## Expected Output
 
@@ -98,6 +114,7 @@ Artifacts are written under `infra/task-status/artifacts/promotion-gate/`:
 The markdown summary includes:
 
 - strict wall-clock policy section
+- retention policy section
 - failed criteria section
 - `Remaining To Unlock` section (always present)
 
