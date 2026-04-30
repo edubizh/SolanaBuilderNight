@@ -257,3 +257,51 @@ test("executeOrder enforces custom-oracle 15-minute resolvable guardrail", async
   });
   assert.equal(accepted.status, "accepted");
 });
+
+test("trackOrderStatusLifecycle returns terminal true when state is filled", async () => {
+  const adapter = new PnpExecutionAdapter({
+    now: () => 1713700000000,
+    sleepImpl: async () => {},
+    client: {
+      async getOrderStatus() {
+        return { status: "filled", orderId: "o1", intentId: "i1", updatedAtMs: 1713700000000 };
+      },
+    },
+  });
+
+  const result = await adapter.trackOrderStatusLifecycle({ orderId: "o1" }, { maxAttempts: 5 });
+  assert.equal(result.terminal, true);
+  assert.equal(result.finalState, "filled");
+  assert.equal(result.attempts, 1);
+});
+
+test("trackOrderStatusLifecycle returns maxAttemptsReached when never terminal", async () => {
+  const adapter = new PnpExecutionAdapter({
+    now: () => 1713700000000,
+    sleepImpl: async () => {},
+    client: {
+      async getOrderStatus() {
+        return { status: "open", orderId: "o1", updatedAtMs: 1713700000000 };
+      },
+    },
+  });
+
+  const result = await adapter.trackOrderStatusLifecycle(
+    { orderId: "o1" },
+    { maxAttempts: 3, pollIntervalMs: 0 },
+  );
+  assert.equal(result.maxAttemptsReached, true);
+  assert.equal(result.terminal, false);
+  assert.equal(result.attempts, 3);
+});
+
+test("validateOrderStatusIntegrity rejects stale timestamps", () => {
+  const base = 1_713_700_000_000;
+  const adapter = new PnpExecutionAdapter({ now: () => base + 60_000 });
+  const evaluated = adapter.validateOrderStatusIntegrity(
+    { status: "open", orderId: "o1", updatedAtMs: base },
+    { nowMs: base + 60_000, maxAgeMs: 30_000 },
+  );
+  assert.equal(evaluated.ok, false);
+  assert.ok(evaluated.errors.some((e) => e.includes("stale")));
+});

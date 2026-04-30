@@ -43,3 +43,50 @@ test("markRedeemed requires settled status", async () => {
     /requires settlement in settled status/,
   );
 });
+
+test("checkSettlementEligibility returns eligible for valid pending record", async () => {
+  const adapter = new PnpSettlementAdapter({ now: () => 1713700000000 });
+  const pending = await adapter.buildSettlementRecord({
+    intentId: "intent-elig",
+    marketId: "m1",
+    orderId: "o1",
+  });
+  const { eligible, reason } = adapter.checkSettlementEligibility({
+    settlementRecord: pending,
+    nowMs: 1713700000000,
+  });
+  assert.equal(eligible, true);
+  assert.equal(reason, null);
+});
+
+test("checkSettlementEligibility rejects non-pending status", async () => {
+  const adapter = new PnpSettlementAdapter({ now: () => 1713700000000 });
+  const { eligible, reason } = adapter.checkSettlementEligibility({
+    settlementRecord: { status: "settled", settlementId: "s", intentId: "i", marketId: "m", orderId: "o" },
+    nowMs: 1,
+  });
+  assert.equal(eligible, false);
+  assert.ok(String(reason).includes("settlement_pending"));
+});
+
+test("buildRedemptionRecord returns redeemed copy without mutating input", async () => {
+  const adapter = new PnpSettlementAdapter({ now: () => 1713700000000 });
+  const pending = await adapter.buildSettlementRecord({
+    intentId: "intent-br",
+    marketId: "m1",
+    orderId: "o1",
+  });
+  const settled = await adapter.markSettled({
+    settlementRecord: pending,
+    settlementTxId: "stx-1",
+    settledAtMs: 1713700001000,
+  });
+  const redeemed = await adapter.buildRedemptionRecord({
+    settlementRecord: settled,
+    redemptionTxId: "rtx-1",
+    redeemedAtMs: 1713700002000,
+  });
+  assert.equal(redeemed.status, "redeemed");
+  assert.equal(settled.status, "settled");
+  assert.equal(redeemed.redemptionTxId, "rtx-1");
+});

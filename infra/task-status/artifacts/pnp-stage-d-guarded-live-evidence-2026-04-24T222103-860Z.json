@@ -1,0 +1,115 @@
+{
+  "task_id": "PM-D-001",
+  "generated_at_utc": "2026-04-24T22:21:03.860Z",
+  "stage": "D",
+  "adapter": "pnp",
+  "mode": "dry_run",
+  "assessment": {
+    "intentId": "pm-d-001-evidence",
+    "evaluatedAtMs": 1777069263860,
+    "allowed": true,
+    "violations": [],
+    "risk": {
+      "estimatedNotionalUsd": 50,
+      "currentNetExposureUsd": 10,
+      "projectedNetExposureUsd": 10,
+      "hedgedExposureUsd": 200,
+      "reduceOnly": false,
+      "orderSlippageBps": 50,
+      "dailyUsedNotionalUsd": 0,
+      "dailyRemainingNotionalUsd": 2500
+    },
+    "caps": {
+      "maxNotionalUsd": 250,
+      "maxDailyNotionalUsd": 2500,
+      "maxSlippageBps": 75
+    },
+    "mode": "dry_run"
+  },
+  "artifact": {
+    "artifactId": "pnp-guarded-pm-d-001-evidence-1777069263860",
+    "mode": "dry_run",
+    "liveRequested": false,
+    "liveExecuted": false,
+    "createdAtMs": 1777069263860,
+    "assessment": {
+      "intentId": "pm-d-001-evidence",
+      "evaluatedAtMs": 1777069263860,
+      "allowed": true,
+      "violations": [],
+      "risk": {
+        "estimatedNotionalUsd": 50,
+        "currentNetExposureUsd": 10,
+        "projectedNetExposureUsd": 10,
+        "hedgedExposureUsd": 200,
+        "reduceOnly": false,
+        "orderSlippageBps": 50,
+        "dailyUsedNotionalUsd": 0,
+        "dailyRemainingNotionalUsd": 2500
+      },
+      "caps": {
+        "maxNotionalUsd": 250,
+        "maxDailyNotionalUsd": 2500,
+        "maxSlippageBps": 75
+      },
+      "mode": "dry_run"
+    },
+    "approval": null,
+    "quoteIntegrity": null,
+    "submission": null
+  },
+  "audit_trail": [
+    {
+      "type": "approval_created",
+      "emittedAtMs": 1777069263860,
+      "payload": {
+        "approvalId": "pnp-approval-pm-d-001-evidence-1777069263860",
+        "intentId": "pm-d-001-evidence",
+        "estimatedNotionalUsd": 50,
+        "approvedBy": "stage-d-evidence-script",
+        "expiresAtMs": 1777070163860
+      }
+    },
+    {
+      "type": "guarded_dry_run",
+      "emittedAtMs": 1777069263860,
+      "payload": {
+        "artifactId": "pnp-guarded-pm-d-001-evidence-1777069263860",
+        "mode": "dry_run",
+        "liveRequested": false,
+        "liveExecuted": false,
+        "createdAtMs": 1777069263860,
+        "assessment": {
+          "intentId": "pm-d-001-evidence",
+          "evaluatedAtMs": 1777069263860,
+          "allowed": true,
+          "violations": [],
+          "risk": {
+            "estimatedNotionalUsd": 50,
+            "currentNetExposureUsd": 10,
+            "projectedNetExposureUsd": 10,
+            "hedgedExposureUsd": 200,
+            "reduceOnly": false,
+            "orderSlippageBps": 50,
+            "dailyUsedNotionalUsd": 0,
+            "dailyRemainingNotionalUsd": 2500
+          },
+          "caps": {
+            "maxNotionalUsd": 250,
+            "maxDailyNotionalUsd": 2500,
+            "maxSlippageBps": 75
+          },
+          "mode": "dry_run"
+        },
+        "approval": null,
+        "quoteIntegrity": null,
+        "submission": null
+      }
+    }
+  ],
+  "guardrail_caps": {
+    "maxNotionalUsd": 250,
+    "maxDailyNotionalUsd": 2500,
+    "maxSlippageBps": 75
+  }
+}

@@ -53,6 +53,50 @@ export class PnpSettlementAdapter {
     };
   }
 
+  checkSettlementEligibility({ settlementRecord, nowMs }) {
+    if (!settlementRecord || typeof settlementRecord !== "object") {
+      return { eligible: false, reason: "missing settlementRecord" };
+    }
+    if (settlementRecord.status !== "settlement_pending") {
+      return { eligible: false, reason: "settlement must be in settlement_pending status" };
+    }
+    const required = [
+      ["settlementId", settlementRecord.settlementId],
+      ["intentId", settlementRecord.intentId],
+      ["marketId", settlementRecord.marketId],
+      ["orderId", settlementRecord.orderId],
+    ];
+    for (const [field, value] of required) {
+      if (!value || typeof value !== "string") {
+        return { eligible: false, reason: `missing required field: ${field}` };
+      }
+    }
+    if (nowMs !== undefined && (!Number.isFinite(nowMs) || nowMs < 0)) {
+      return { eligible: false, reason: "invalid nowMs" };
+    }
+    return { eligible: true, reason: null };
+  }
+
+  /**
+   * Builds a redeemed settlement record without mutating the input (evidence path).
+   * @param {{ settlementRecord: object, redemptionTxId: string, redeemedAtMs?: number }} input
+   */
+  async buildRedemptionRecord({ settlementRecord, redemptionTxId, redeemedAtMs }) {
+    const atMs = redeemedAtMs ?? this.now();
+    this.#validateSettlementRecord(settlementRecord);
+    this.#validateRequiredString(redemptionTxId, "redemptionTxId");
+    if (settlementRecord.status !== "settled") {
+      throw new Error("PNP redemption requires settlement in settled status");
+    }
+    return {
+      ...settlementRecord,
+      status: "redeemed",
+      redemptionTxId,
+      redeemedAtMs: atMs,
+      updatedAtMs: atMs,
+    };
+  }
+
   #validateSettlementRecord(settlementRecord) {
     if (!settlementRecord || typeof settlementRecord !== "object") {
       throw new Error("PNP settlement requires settlementRecord payload");

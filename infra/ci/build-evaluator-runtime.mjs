@@ -259,16 +259,53 @@ function isConfirmedEquivalent(row) {
   return false;
 }
 
+function toFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Best-effort realized PnL (USD) for a single autobot JSONL row. Callers that only aggregate
+ * confirmed on-chain activity should use this after `isConfirmedEquivalent(row)` and `!isRpcErrorRow(row)`.
+ * Old-format entries (pre PM-R-006) may lack `realizedNetUsd` on the root or `profitRealization`;
+ * for those, once on-chain confirmation is present (`isConfirmedEquivalent`), we use
+ * `profitGate.expectedNetUsd` as the available realized proxy.
+ */
 function getRealizedNetUsdForRow(row) {
+  if (isRpcErrorRow(row)) {
+    return null;
+  }
   if (row.realizedNetUsd !== undefined && row.realizedNetUsd !== null) {
-    return Number(row.realizedNetUsd);
+    const n = toFiniteNumber(row.realizedNetUsd);
+    if (n !== null) {
+      return n;
+    }
+  }
+  if (row.liveExecution && typeof row.liveExecution === "object" && row.liveExecution.realizedNetUsd != null) {
+    const n = toFiniteNumber(row.liveExecution.realizedNetUsd);
+    if (n !== null) {
+      return n;
+    }
   }
   if (row.profitRealization && typeof row.profitRealization === "object" && row.profitRealization.realizedNetUsd != null) {
-    return Number(row.profitRealization.realizedNetUsd);
+    const n = toFiniteNumber(row.profitRealization.realizedNetUsd);
+    if (n !== null) {
+      return n;
+    }
+  }
+  // Fallback for old-format entries: confirmed on-chain but logged before PM-R-006 added realizedNetUsd.
+  const expectedNet = toFiniteNumber(row?.profitGate?.expectedNetUsd);
+  if (expectedNet !== null && expectedNet > 0) {
+    return expectedNet;
   }
   return null;
 }
 
+/**
+ * Sums realized swap PnL from all `profit-loop-*.jsonl` files. Rows must pass `isConfirmedEquivalent`
+ * (on-chain success / confirmation) and are skipped when not RPC-error but still unconfirmed.
+ * Old confirmed rows use `profitGate.expectedNetUsd` when explicit realized fields are absent.
+ */
 function sumSwapBotRealizedPnlFromAutobot(autobotLogDir) {
   let sum = 0;
   for (const filePath of listProfitLoopPaths(autobotLogDir)) {
@@ -298,6 +335,79 @@ function sumSwapBotRealizedPnlFromAutobot(autobotLogDir) {
     }
   }
   return sum;
+}
+
+function isHttpUrlString(value) {
+  return typeof value === "string" && /^https?:\/\//.test(value.trim());
+}
+
+/**
+ * Picks the `endpoints.rpcUrl` from the autobot JSONL line with the latest `timestamp` / `startedAt`
+ * (lexicographic ISO compare), so we use the same Helius URL the bot used (no hardcoding).
+ */
+function extractLatestAutobotRpcUrl(autobotLogDir) {
+  let bestUrl = null;
+  let bestKey = "";
+  for (const filePath of listProfitLoopPaths(autobotLogDir)) {
+    const lines = readFileSync(filePath, "utf8").split(/\r?\n/);
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t) {
+        continue;
+      }
+      let row;
+      try {
+        row = JSON.parse(t);
+      } catch {
+        continue;
+      }
+      const u = row?.endpoints?.rpcUrl;
+      if (!isHttpUrlString(u)) {
+        continue;
+      }
+      const timeKey = String(row.timestamp ?? row.startedAt ?? "");
+      if (timeKey >= bestKey) {
+        bestKey = timeKey;
+        bestUrl = u.trim();
+      }
+    }
+  }
+  return bestUrl;
+}
+
+/**
+ * JSONL sum first, then best-effort `autobot_pnl_report.mjs --realized` (on-chain replay). If the RPC
+ * script returns a higher `sumRealizedUsd`, that wins. Failures (network, parse, timeout) are ignored;
+ * the caller still gets the JSONL-based sum.
+ */
+function sumSwapBotRealizedPnlBestEffort(autobotLogDir, workspaceRoot) {
+  const jsonlSum = sumSwapBotRealizedPnlFromAutobot(autobotLogDir);
+  if (process.env.EVALUATOR_SKIP_AUTOBOT_SPAWN === "1" || process.env.EVALUATOR_SKIP_AUTOBOT_SPAWN === "true") {
+    return jsonlSum;
+  }
+  const rpcUrl = extractLatestAutobotRpcUrl(autobotLogDir);
+  if (!rpcUrl) {
+    return jsonlSum;
+  }
+  try {
+    const scriptPath = resolve(workspaceRoot, "scripts/autobot_pnl_report.mjs");
+    const result = spawnSync(
+      process.execPath,
+      [scriptPath, "--realized", "--log-dir", autobotLogDir],
+      { cwd: workspaceRoot, timeout: 30_000, env: { ...process.env, SOLANA_RPC_URL: rpcUrl } },
+    );
+    if (result.status === 0 && result.stdout) {
+      const text = result.stdout.toString("utf8").trim();
+      const report = JSON.parse(text);
+      const rpcSum = report?.realized?.sumRealizedUsd;
+      if (Number.isFinite(rpcSum) && rpcSum > jsonlSum) {
+        return rpcSum;
+      }
+    }
+  } catch {
+    // fall back to jsonl sum
+  }
+  return jsonlSum;
 }
 
 function asOfMsFromEnv() {
@@ -418,7 +528,7 @@ function main() {
     canonicalQuotes,
     nowMs,
   );
-  const swapBotRealizedPnlUsd = sumSwapBotRealizedPnlFromAutobot(autobotLogDir);
+  const swapBotRealizedPnlUsd = sumSwapBotRealizedPnlBestEffort(autobotLogDir, workspaceRoot);
   const realizedPnlComputed = swapBotRealizedPnlUsd + paperPnlUsd;
   const criticalRiskBreaches = paperBreachCount;
 
@@ -459,6 +569,10 @@ export {
   getLatestOpportunityScanPath,
   extractCanonicalQuotesFromJsonlLines,
   sumSwapBotRealizedPnlFromAutobot,
+  sumSwapBotRealizedPnlBestEffort,
+  extractLatestAutobotRpcUrl,
+  getRealizedNetUsdForRow,
+  toFiniteNumber,
   isCanonicalQuoteObject,
   isRpcErrorRow,
   isConfirmedEquivalent,
